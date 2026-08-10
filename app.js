@@ -51,7 +51,7 @@ const state = {
 function callServer(fnName, args) {
   return new Promise((resolve, reject) => {
     // URL ของ Google Apps Script Web App ของคุณ (ที่ Deploy ใหม่)
-    const scriptUrl = "https://script.google.com/macros/s/AKfycbz0aB75WkzekxGQ_qXCvTEGteRPCSLaz5BFaUrD5_1WzwHEvszQoKCmbdMdFnNsMVZF/exec";
+    const scriptUrl = "https://script.google.com/macros/s/AKfycbxjUXOExYi3TI3RIvMvFV4LZwChnnAwBCApUn5YNBhFVfpgpKQrUrwe37fpYAmXBB46/exec";
     
     // สำหรับโหมด Mock
     if (window.__mockApi) {
