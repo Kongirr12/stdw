@@ -90,7 +90,7 @@ function callServer(fnName, args) {
     });
   });
 }
-function api(fnName, ...args) {
+async function api(fnName, ...args) {
   try {
     return await callServer(fnName, args);
   } catch (err) {
@@ -292,13 +292,11 @@ const ui = {
     const headers = Object.keys(rows[0]);
     const esc = (v) => {
       const s = (v === null || v === undefined) ? '' : String(v);
-      return /[",\r
-]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+      return /[\\",\\r\\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
     };
     return [headers.join(',')]
       .concat(rows.map(r => headers.map(h => esc(r[h])).join(',')))
-      .join('\r
-');
+      .join('\r\n');
   },
   downloadCsv(csv, filename) {
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
@@ -1930,9 +1928,7 @@ const checkPage = {
     if (!checkPage.rows || !checkPage.rows.length) { ui.toast('ไม่มีข้อมูลให้ส่งออก', 'warning'); return; }
     const headers = ['เลขที่', 'ชื่อ-นามสกุล', 'สถานะ', 'คะแนน', 'หมายเหตุ'];
     const csvRows = checkPage.rows.map(r => [r.No, r.FullName, ui.statusMeta(r.Status).label, r.Score, r.Note].map(v => `"${String(v || '').replace(/"/g, '""')}"`).join(','));
-    ui.downloadCsv(headers.join(',') + '\r
-' + csvRows.join('\r
-'), 'check_export.csv');
+    ui.downloadCsv(headers.join(',') + '\r\n' + csvRows.join('\r\n'), 'check_export.csv');
   },
 
   async duplicate(assignmentId) {
@@ -2545,8 +2541,7 @@ const trackPage = {
       return [s.No, s.FullName].concat(vals, sum.sent + '/' + sum.total);
     });
     const csv = [headers.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')]
-      .concat(rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))).join('\r
-');
+      .concat(rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))).join('\r\n');
     ui.downloadCsv(csv, 'tracking_matrix.csv');
   }
 };
@@ -2963,8 +2958,7 @@ const scorePage = {
       return [r.No, (r.Title || '') + r.FirstName + ' ' + r.LastName].concat(cells, [t.total, t.percent, t.letter]);
     });
     const csv = [headers.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')]
-      .concat(lines.map(l => l.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))).join('\r
-');
+      .concat(lines.map(l => l.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))).join('\r\n');
     ui.downloadCsv(csv, 'scores.csv');
   },
 
@@ -4255,8 +4249,7 @@ const settingsPage = {
   parseImportFile(file) {
     const reader = new FileReader();
     reader.onload = (e) => {
-      const lines = e.target.result.split(/\r?
-/).filter(l => l.trim());
+      const lines = e.target.result.split(/\r?\n/).filter(l => l.trim());
       const headers = lines[0].split(',').map(h => h.trim());
       const rows = lines.slice(1).map(line => {
         const cols = line.split(',').map(c => c.trim());
