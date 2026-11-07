@@ -1178,7 +1178,9 @@ async function renderStaffDashboard() {
         <div class="card hoverable" style="height:100%;">
           <div style="font-weight:700;font-size:12.5px;margin-bottom:6px;">ภาพรวมสถานะ</div>
           <div class="d-flex align-items-center gap-2">
-            <canvas id="chart-status" width="78" height="78" style="max-width:78px;flex-shrink:0;"></canvas>
+            <div style="position:relative;width:82px;height:82px;flex-shrink:0;min-width:0;">
+              <canvas id="chart-status"></canvas>
+            </div>
             <div style="flex:1;min-width:0;font-size:11px;" id="status-legend"></div>
           </div>
         </div>
@@ -1282,36 +1284,75 @@ async function renderStaffDashboard() {
     { key: 'resubmitted', label: 'ส่งแล้วแก้ไข', color: primaryColor },
     { key: 'not_submitted', label: 'ยังไม่ส่ง', color: dangerColor }
   ];
-  const statusTotal = statusDefs.reduce((sum, d) => sum + kpi.statusBreakdown[d.key], 0) || 1;
+  const statusTotal = statusDefs.reduce((sum, d) => sum + (kpi.statusBreakdown ? (Number(kpi.statusBreakdown[d.key]) || 0) : 0), 0);
 
-  state.charts.status = new Chart(document.getElementById('chart-status'), {
-    type: 'doughnut',
-    data: { labels: statusDefs.map(d => d.label), datasets: [{ data: statusDefs.map(d => kpi.statusBreakdown[d.key]), backgroundColor: statusDefs.map(d => d.color), borderWidth: 2, borderColor: rootStyles.getPropertyValue('--card'), cutout: '68%' }] },
-    options: { animation: { duration: 700, easing: 'easeOutCubic' }, plugins: { legend: { display: false } } }
-  });
+  if (state.charts.status) {
+    try { state.charts.status.destroy(); } catch (e) {}
+  }
+  const statusCanvas = document.getElementById('chart-status');
+  if (statusCanvas) {
+    const hasData = statusTotal > 0;
+    const chartData = hasData
+      ? statusDefs.map(d => (kpi.statusBreakdown && Number(kpi.statusBreakdown[d.key])) || 0)
+      : [1];
+    const chartColors = hasData
+      ? statusDefs.map(d => d.color)
+      : ['color-mix(in srgb, var(--border, #CBD5E1) 80%, transparent)'];
+
+    state.charts.status = new Chart(statusCanvas, {
+      type: 'doughnut',
+      data: {
+        labels: hasData ? statusDefs.map(d => d.label) : ['ยังไม่มีข้อมูล'],
+        datasets: [{
+          data: chartData,
+          backgroundColor: chartColors,
+          borderWidth: 2,
+          borderColor: rootStyles.getPropertyValue('--card') || '#fff',
+          cutout: '68%'
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: { duration: 700, easing: 'easeOutCubic' },
+        plugins: {
+          legend: { display: false },
+          tooltip: { enabled: hasData }
+        }
+      }
+    });
+  }
+
   document.getElementById('status-legend').innerHTML = statusDefs.map(d => `
     <div class="legend-row" style="padding:4px 0;">
       <span class="legend-dot" style="background:${d.color};"></span>
       <span class="legend-label" style="font-size:11px;">${d.label}</span>
-      <span class="legend-count" style="font-size:11px;">${kpi.statusBreakdown[d.key]}</span>
+      <span class="legend-count" style="font-size:11px;">${(kpi.statusBreakdown && kpi.statusBreakdown[d.key]) || 0}</span>
     </div>`).join('');
 
-  const lastTrend = kpi.submitTrend[kpi.submitTrend.length - 1];
+  const lastTrend = kpi.submitTrend && kpi.submitTrend[kpi.submitTrend.length - 1];
   document.getElementById('trend-badge').innerText = lastTrend ? lastTrend.rate + '%' : '-';
-  state.charts.trend = new Chart(document.getElementById('chart-trend'), {
-    type: 'line',
-    data: {
-      labels: kpi.submitTrend.map(t => ''),
-      datasets: [{
-        data: kpi.submitTrend.map(t => t.rate), borderColor: primaryColor, backgroundColor: (ctx) => {
-          const g = ctx.chart.ctx.createLinearGradient(0, 0, 0, 90);
-          g.addColorStop(0, 'rgba(37,99,235,.25)'); g.addColorStop(1, 'rgba(37,99,235,0)');
-          return g;
-        }, fill: true, tension: 0.42, pointRadius: 2.5, pointBackgroundColor: primaryColor, borderWidth: 2
-      }]
-    },
-    options: { animation: { duration: 700, easing: 'easeOutCubic' }, plugins: { legend: { display: false } }, scales: { y: { display: false, min: 0, max: 100 }, x: { display: false } } }
-  });
+
+  if (state.charts.trend) {
+    try { state.charts.trend.destroy(); } catch (e) {}
+  }
+  const trendCanvas = document.getElementById('chart-trend');
+  if (trendCanvas && kpi.submitTrend) {
+    state.charts.trend = new Chart(trendCanvas, {
+      type: 'line',
+      data: {
+        labels: kpi.submitTrend.map(t => ''),
+        datasets: [{
+          data: kpi.submitTrend.map(t => t.rate), borderColor: primaryColor, backgroundColor: (ctx) => {
+            const g = ctx.chart.ctx.createLinearGradient(0, 0, 0, 90);
+            g.addColorStop(0, 'rgba(37,99,235,.25)'); g.addColorStop(1, 'rgba(37,99,235,0)');
+            return g;
+          }, fill: true, tension: 0.42, pointRadius: 2.5, pointBackgroundColor: primaryColor, borderWidth: 2
+        }]
+      },
+      options: { animation: { duration: 700, easing: 'easeOutCubic' }, plugins: { legend: { display: false } }, scales: { y: { display: false, min: 0, max: 100 }, x: { display: false } } }
+    });
+  }
 
   renderSubjectAverages(kpi.subjectAverages);
   renderTopBehavior(kpi.topBehavior);
@@ -1501,13 +1542,17 @@ function renderSubjectAverages(subjectAverages) {
 
 function renderTopBehavior(topBehavior) {
   const el = document.getElementById('top-behavior-list');
+  if (!el) return;
   if (!topBehavior || !topBehavior.length) { el.innerHTML = '<div class="text-muted-app" style="font-size:12.5px;padding:12px 0;">ยังไม่มีบันทึกพฤติกรรม</div>'; return; }
-  el.innerHTML = topBehavior.map(b => `
+  el.innerHTML = topBehavior.map(b => {
+    const name = b.FullName || b.Name || 'นักเรียน';
+    return `
     <div class="behavior-row">
-      <div class="avatar avatar-round">${ui.initials(b.FullName, '')}</div>
-      <div style="font-size:12.5px;font-weight:650;">${ui.escapeHtml(b.FullName)}</div>
-      <span class="behavior-points"><span class="material-symbols-outlined" style="font-size:15px;">star</span>${b.points}</span>
-    </div>`).join('');
+      <div class="avatar avatar-round">${ui.initials(name, '')}</div>
+      <div style="font-size:12.5px;font-weight:650;">${ui.escapeHtml(name)}</div>
+      <span class="behavior-points"><span class="material-symbols-outlined" style="font-size:15px;">star</span>${b.points !== undefined ? b.points : 0}</span>
+    </div>`;
+  }).join('');
 }
 
 async function renderDashboardTaskList(isStudent) {

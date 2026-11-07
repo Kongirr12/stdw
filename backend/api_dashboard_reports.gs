@@ -58,8 +58,9 @@ function apiGetDashboardKpi(token, classId, subjectId) {
     bMap[sId] = (bMap[sId] || 0) + Number(behaviors[b].Points || 0);
   }
   var topBehavior = students.map(function(s) {
+    var name = s.FullName || ((s.Title || "") + s.FirstName + " " + s.LastName).trim() || s.StudentID || "นักเรียน";
     return {
-      FullName: s.FullName,
+      FullName: name,
       points: bMap[String(s.StudentID)] || 0
     };
   }).sort(function(x, y) { return y.points - x.points; }).slice(0, 5);
