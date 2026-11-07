@@ -79,8 +79,13 @@ function callServer(fnName, args) {
   }
 
   const promise = new Promise((resolve, reject) => {
-    // URL ของ Google Apps Script Web App ของคุณ (ที่ Deploy ใหม่)
-    const scriptUrl = "https://script.google.com/macros/s/AKfycbxjUXOExYi3TI3RIvMvFV4LZwChnnAwBCApUn5YNBhFVfpgpKQrUrwe37fpYAmXBB46/exec";
+    // URL ของ Google Apps Script Web App (รองรับการ override ผ่าน ?api= หรือ localStorage)
+    const urlParam = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('api') : null;
+    if (urlParam) {
+      try { localStorage.setItem('sswm_api_url', urlParam); } catch (e) {}
+    }
+    const scriptUrl = (typeof localStorage !== 'undefined' && localStorage.getItem('sswm_api_url')) ||
+                      "https://script.google.com/macros/s/AKfycbxjUXOExYi3TI3RIvMvFV4LZwChnnAwBCApUn5YNBhFVfpgpKQrUrwe37fpYAmXBB46/exec";
     
     // สำหรับโหมด Mock
     if (window.__mockApi) {
