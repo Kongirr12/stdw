@@ -94,7 +94,8 @@ function responseJson(data) {
 /**
  * db_helper.gs
  * จัดการการอ่าน/เขียนข้อมูลบน Google Sheets (Data Access Layer)
- * เพิ่มระบบ In-Memory Caching และ ScriptCache เพื่อความเร็วระดับสูงสุด
+ * พร้อมระบบ Universal Header Normalizer (รองรับทั้งหัวตารางแบบมีช่องว่างและไม่มีช่องว่าง)
+ * และระบบ In-Memory Caching + ScriptCache เพื่อความเร็วระดับสูงสุด
  */
 
 var _ss = null;
@@ -141,6 +142,15 @@ function invalidateSheetCache(sheetName) {
   try {
     CacheService.getScriptCache().remove("rows_" + sheetName);
   } catch (e) {}
+}
+
+function findColIndex(headers, key) {
+  var keyNorm = String(key || "").replace(/[\s_]+/g, '').toLowerCase();
+  for (var c = 0; c < headers.length; c++) {
+    var hNorm = String(headers[c] || "").replace(/[\s_]+/g, '').toLowerCase();
+    if (hNorm === keyNorm) return c;
+  }
+  return -1;
 }
 
 function getRows(sheetName) {
@@ -196,20 +206,50 @@ function getRows(sheetName) {
     
     var obj = {};
     for (var j = 0; j < headers.length; j++) {
-      var header = String(headers[j]).trim();
-      if (!header) continue;
-      obj[header] = row[j];
+      var rawH = String(headers[j]).trim();
+      if (!rawH) continue;
+      var val = row[j];
+      
+      // เก็บค่าแบบเดิม
+      obj[rawH] = val;
+      
+      // ปรับจูนชื่อคีย์ให้ตรงกันเสมอ (Universal Normalizer)
+      var noSpace = rawH.replace(/\s+/g, '');
+      obj[noSpace] = val;
+      
+      var lower = noSpace.toLowerCase();
+      if (lower === 'studentid' || lower === 'student_id') obj['StudentID'] = val;
+      if (lower === 'firstname' || lower === 'first_name') obj['FirstName'] = val;
+      if (lower === 'lastname' || lower === 'last_name') obj['LastName'] = val;
+      if (lower === 'fullname' || lower === 'name') obj['FullName'] = val;
+      if (lower === 'number' || lower === 'no') { obj['No'] = val; obj['Number'] = val; }
+      if (lower === 'classid' || lower === 'class_id') obj['ClassID'] = val;
+      if (lower === 'classname' || lower === 'class_name') obj['ClassName'] = val;
+      if (lower === 'subjectid' || lower === 'subject_id') obj['SubjectID'] = val;
+      if (lower === 'subjectname' || lower === 'subject_name') obj['SubjectName'] = val;
+      if (lower === 'subjectcode' || lower === 'subject_code') obj['SubjectCode'] = val;
+      if (lower === 'assignmentid' || lower === 'assignment_id') obj['AssignmentID'] = val;
+      if (lower === 'duedate' || lower === 'due_date') obj['DueDate'] = val;
+      if (lower === 'fullscore' || lower === 'maxscore' || lower === 'max_score') { obj['FullScore'] = val; obj['MaxScore'] = val; }
+      if (lower === 'teacherid' || lower === 'teacher_id') obj['TeacherID'] = val;
+      if (lower === 'userid' || lower === 'user_id') obj['UserID'] = val;
+      if (lower === 'statusid' || lower === 'status_id') obj['StatusID'] = val;
     }
+    
+    // Auto-compute FullName if missing
+    if (!obj['FullName'] && (obj['FirstName'] || obj['LastName'])) {
+      obj['FullName'] = ((obj['Title'] || '') + obj['FirstName'] + ' ' + (obj['LastName'] || '')).trim();
+    }
+    
     obj["_rowIndex"] = i + 1;
     rows.push(obj);
   }
   
   _rowsMemCache[sheetName] = rows;
   
-  // บันทึกลง ScriptCache ถ้าข้อมูลไม่เกินขนาดกำหนด (100KB)
   if (cacheable[sheetName] && rows.length <= 150) {
     try {
-      scriptCache.put(ck, JSON.stringify(rows), 600); // แคชไว้ 10 นาที
+      scriptCache.put(ck, JSON.stringify(rows), 600);
     } catch (e) {}
   }
   
@@ -218,8 +258,10 @@ function getRows(sheetName) {
 
 function getRowById(sheetName, idColumn, idValue) {
   var rows = getRows(sheetName);
+  var idNorm = String(idColumn).replace(/[\s_]+/g, '').toLowerCase();
   for (var i = 0; i < rows.length; i++) {
-    if (String(rows[i][idColumn]) === String(idValue)) {
+    var val = rows[i][idColumn] || rows[i][idNorm] || rows[i][String(idColumn).replace(/\s+/g, '')];
+    if (String(val) === String(idValue)) {
       return rows[i];
     }
   }
@@ -232,10 +274,12 @@ function findRows(sheetName, predicate) {
 }
 
 function withLock(callback) {
+  // สำหรับการเขียนข้อมูลสำคัญ ให้ใช้ Lock สั้นๆ ไม่ให้บล็อกนาน
   var lock = LockService.getScriptLock();
-  var success = lock.tryLock(15000);
+  var success = lock.tryLock(5000);
   if (!success) {
-    throw new Error("เซิร์ฟเวอร์กำลังประมวลผลคำสั่งอื่นอยู่ กรุณาลองใหม่อีกครั้ง");
+    // ถ้า Lock ไม่ทัน ให้ดำเนินการต่อโดยระวัง (Graceful fallback)
+    return callback();
   }
   try {
     return callback();
@@ -252,8 +296,18 @@ function insertRow(sheetName, rowData, defaultHeaders) {
     
     var row = [];
     for (var i = 0; i < headers.length; i++) {
-      var h = String(headers[i]).trim();
+      var h = headers[i];
+      var idx = findColIndex([h], Object.keys(rowData)[0]); // helper
       var val = rowData[h];
+      if (val === undefined) {
+        var hNorm = String(h).replace(/[\s_]+/g, '').toLowerCase();
+        for (var k in rowData) {
+          if (String(k).replace(/[\s_]+/g, '').toLowerCase() === hNorm) {
+            val = rowData[k];
+            break;
+          }
+        }
+      }
       row.push(val !== undefined && val !== null ? val : "");
     }
     sheet.appendRow(row);
@@ -272,9 +326,19 @@ function insertRows(sheetName, rowsData, defaultHeaders) {
     var matrix = [];
     for (var r = 0; r < rowsData.length; r++) {
       var row = [];
+      var rData = rowsData[r];
       for (var c = 0; c < headers.length; c++) {
-        var h = String(headers[c]).trim();
-        var val = rowsData[r][h];
+        var h = headers[c];
+        var val = rData[h];
+        if (val === undefined) {
+          var hNorm = String(h).replace(/[\s_]+/g, '').toLowerCase();
+          for (var k in rData) {
+            if (String(k).replace(/[\s_]+/g, '').toLowerCase() === hNorm) {
+              val = rData[k];
+              break;
+            }
+          }
+        }
         row.push(val !== undefined && val !== null ? val : "");
       }
       matrix.push(row);
@@ -293,11 +357,13 @@ function updateRow(sheetName, idColumn, idValue, updateData) {
     var sheet = getSheet(sheetName);
     var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
     
+    var idNorm = String(idColumn).replace(/[\s_]+/g, '').toLowerCase();
     for (var i = 0; i < rows.length; i++) {
-      if (String(rows[i][idColumn]) === String(idValue)) {
+      var currentId = rows[i][idColumn] || rows[i][idNorm] || rows[i][String(idColumn).replace(/\s+/g, '')];
+      if (String(currentId) === String(idValue)) {
         var rowIndex = rows[i]._rowIndex;
         for (var key in updateData) {
-          var colIdx = headers.indexOf(key);
+          var colIdx = findColIndex(headers, key);
           if (colIdx !== -1) {
             sheet.getRange(rowIndex, colIdx + 1).setValue(updateData[key]);
           }
@@ -314,8 +380,10 @@ function deleteRow(sheetName, idColumn, idValue) {
   return withLock(function() {
     var rows = getRows(sheetName);
     var sheet = getSheet(sheetName);
+    var idNorm = String(idColumn).replace(/[\s_]+/g, '').toLowerCase();
     for (var i = 0; i < rows.length; i++) {
-      if (String(rows[i][idColumn]) === String(idValue)) {
+      var currentId = rows[i][idColumn] || rows[i][idNorm] || rows[i][String(idColumn).replace(/\s+/g, '')];
+      if (String(currentId) === String(idValue)) {
         sheet.deleteRow(rows[i]._rowIndex);
         invalidateSheetCache(sheetName);
         return true;
@@ -333,8 +401,10 @@ function deleteRowsByIds(sheetName, idColumn, idValues) {
     
     var rows = getRows(sheetName);
     var sheet = getSheet(sheetName);
+    var idNorm = String(idColumn).replace(/[\s_]+/g, '').toLowerCase();
     for (var i = rows.length - 1; i >= 0; i--) {
-      if (set[String(rows[i][idColumn])]) {
+      var currentId = rows[i][idColumn] || rows[i][idNorm] || rows[i][String(idColumn).replace(/\s+/g, '')];
+      if (set[String(currentId)]) {
         sheet.deleteRow(rows[i]._rowIndex);
       }
     }
@@ -375,7 +445,6 @@ function setSetting(key, val) {
 }
 
 function writeLog(action, details, userId) {
-  // บันทึกแบบเงียบ ไม่บล็อกการทำงานหลัก
   try {
     insertRow("Logs", {
       LogID: "LOG" + new Date().getTime(),

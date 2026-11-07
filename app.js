@@ -400,10 +400,41 @@ const app = {
   async init() {
     try {
       if (state.theme === 'dark') document.body.setAttribute('data-theme', 'dark');
+
+      // ⚡ INSTANT LOAD (0ms): โหลดจาก Cache ทันทีโดยไม่ต้องรอเซิร์ฟเวอร์
+      const cachedBoot = safeParse(store.get('sswm_boot_cache'), null);
+      if (cachedBoot && cachedBoot.session && state.token) {
+        state.session = cachedBoot.session;
+        if (cachedBoot.settings) state._settings = cachedBoot.settings;
+        if (cachedBoot.classes) state.classesCache = cachedBoot.classes;
+        if (cachedBoot.subjects) state.subjectsCache = cachedBoot.subjects;
+        if (cachedBoot.kpi) state._bootKpi = cachedBoot.kpi;
+        if (cachedBoot.earlyWarning) state._bootEarlyWarning = cachedBoot.earlyWarning;
+        
+        const loader = document.getElementById('global-loader');
+        if (loader) loader.classList.add('hidden');
+        
+        await this.enterApp();
+        this.bindGlobalEvents();
+        
+        // Background Revalidation (ดึงข้อมูลล่าสุดเงียบๆ เบื้องหลัง)
+        apiQuiet('apiBootstrap', state.token).then(freshBoot => {
+          if (freshBoot && freshBoot.session) {
+            store.set('sswm_boot_cache', JSON.stringify(freshBoot));
+            state.session = freshBoot.session;
+            if (freshBoot.settings) state._settings = freshBoot.settings;
+            if (freshBoot.classes) state.classesCache = freshBoot.classes;
+            if (freshBoot.subjects) state.subjectsCache = freshBoot.subjects;
+          }
+        }).catch(() => {});
+        return;
+      }
+
       if (state.token) {
         try {
           const boot = await apiQuiet('apiBootstrap', state.token);
           if (boot && boot.session) {
+            store.set('sswm_boot_cache', JSON.stringify(boot));
             state.session = boot.session;
             if (boot.settings) state._settings = boot.settings;
             if (boot.classes) state.classesCache = boot.classes;
@@ -466,6 +497,7 @@ const app = {
   showLogin() {
     store.remove('sswm_token');
     store.remove('sswm_session');
+    store.remove('sswm_boot_cache');
     document.getElementById('login-screen').style.display = 'flex';
     document.getElementById('app-shell').style.display = 'none';
 
