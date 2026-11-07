@@ -30,7 +30,7 @@ function setupDatabase() {
   }
   
   // 1. Initial Settings
-  apiSaveGeneralSettings(null, {
+  setSetting("GeneralSettings", {
     schoolName: "โรงเรียนตัวอย่างวิทยา",
     schoolLogoUrl: "",
     academicYear: "2569",

@@ -1483,13 +1483,16 @@ function apiGetGeneralSettings(token) {
 }
 
 function apiSaveGeneralSettings(token, settings) {
-  var session = apiValidateSession(token);
-  if (session.role !== "admin") throw new Error("เฉพาะแอดมินเท่านั้นที่แก้ไขการตั้งค่าทั่วไปได้");
+  var session = null;
+  if (token) {
+    session = apiValidateSession(token);
+    if (session.role !== "admin") throw new Error("เฉพาะแอดมินเท่านั้นที่แก้ไขการตั้งค่าทั่วไปได้");
+  }
   
   var current = apiGetGeneralSettings(token);
   var merged = Object.assign({}, current, settings || {});
   setSetting("GeneralSettings", merged);
-  writeLog("SAVE_SETTINGS", "บันทึกการตั้งค่าทั่วไป", session.userId);
+  if (token && session) writeLog("SAVE_SETTINGS", "บันทึกการตั้งค่าทั่วไป", session.userId);
   return { success: true };
 }
 
@@ -2350,7 +2353,7 @@ function setupDatabase() {
   }
   
   // 1. Initial Settings
-  apiSaveGeneralSettings(null, {
+  setSetting("GeneralSettings", {
     schoolName: "โรงเรียนตัวอย่างวิทยา",
     schoolLogoUrl: "",
     academicYear: "2569",
