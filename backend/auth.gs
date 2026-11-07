@@ -1,14 +1,46 @@
 /**
  * auth.gs
  * จัดการการเข้าสู่ระบบ เซสชัน และสิทธิ์ผู้ใช้งาน
+ * พร้อมฟังก์ชัน apiBootstrap เพื่อลด Network Round-Trips จาก 6 ครั้งเหลือ 1 ครั้ง
  */
 
 function apiGetPublicConfig() {
   var gs = apiGetGeneralSettings();
+  var pickerOn = gs.studentPicker !== false;
+  var classes = [];
+  if (pickerOn) {
+    try {
+      classes = apiGetLoginClasses().classes;
+    } catch (e) {}
+  }
   return {
     demoMode: false,
-    studentPicker: gs.studentPicker !== false,
+    studentPicker: pickerOn,
+    classes: classes,
     accounts: []
+  };
+}
+
+function apiBootstrap(token) {
+  var session = apiValidateSession(token);
+  var settings = apiGetGeneralSettings(token);
+  var classes = apiGetMyClasses(token);
+  var subjects = apiListSubjects(token);
+  var kpi = null;
+  var earlyWarning = [];
+  
+  if (session.role !== "student") {
+    try { kpi = apiGetDashboardKpi(token); } catch (e) {}
+    try { earlyWarning = apiGetEarlyWarning(token); } catch (e) {}
+  }
+  
+  return {
+    session: session,
+    settings: settings,
+    classes: classes,
+    subjects: subjects,
+    kpi: kpi,
+    earlyWarning: earlyWarning
   };
 }
 
@@ -62,7 +94,9 @@ function apiGetLoginRoster(classId) {
 
 function saveSessionData(token, sessionObj) {
   var cache = CacheService.getScriptCache();
-  cache.put("sess_" + token, JSON.stringify(sessionObj), 21600); // 6 ชั่วโมง
+  try {
+    cache.put("sess_" + token, JSON.stringify(sessionObj), 21600); // 6 ชั่วโมง
+  } catch (e) {}
 }
 
 function getSessionData(token) {
@@ -73,18 +107,19 @@ function getSessionData(token) {
     try { return JSON.parse(val); } catch (e) {}
   }
   
-  // สำรอง: หาก Cache หลุด ให้ค้นหาจาก Users หรือ Students
   var users = getRows("Users");
   for (var i = 0; i < users.length; i++) {
     var u = users[i];
     if (u.Token === token) {
-      return {
+      var sess = {
         token: token,
         fullName: u.FullName || u.Name || u.Username,
         role: u.Role || "teacher",
         userId: u.UserID,
         refId: u.RefID || u.UserID
       };
+      saveSessionData(token, sess);
+      return sess;
     }
   }
   return null;
@@ -157,7 +192,7 @@ function apiValidateSession(token) {
 
 function apiLogout(token) {
   if (token) {
-    CacheService.getScriptCache().remove("sess_" + token);
+    try { CacheService.getScriptCache().remove("sess_" + token); } catch (e) {}
     writeLog("LOGOUT", "ออกจากระบบ", "");
   }
   return { success: true };

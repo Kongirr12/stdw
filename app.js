@@ -48,8 +48,37 @@ const state = {
   activeClass: null
 };
 
+const _inFlight = new Map();
+const _clientApiCache = new Map();
+const CACHEABLE_APIS = new Set([
+  'apiGetPublicConfig', 'apiGetGeneralSettings', 'apiListClasses',
+  'apiListSubjects', 'apiListBehaviorTypes', 'apiListScoreSettings',
+  'apiGetScoreFormula', 'apiGetGradeScale', 'apiListTeachers',
+  'apiListAcademicYears', 'apiGetLoginClasses'
+]);
+
 function callServer(fnName, args) {
-  return new Promise((resolve, reject) => {
+  const isMutation = fnName.startsWith('apiSave') || fnName.startsWith('apiDelete') ||
+                     fnName.startsWith('apiUpdate') || fnName.startsWith('apiBulk') ||
+                     fnName.startsWith('apiAdd') || fnName.startsWith('apiImport') ||
+                     fnName.startsWith('apiChange') || fnName.startsWith('apiReset');
+  if (isMutation) {
+    _clientApiCache.clear();
+  }
+
+  const cacheKey = fnName + ':' + JSON.stringify(args || []);
+  if (!isMutation && CACHEABLE_APIS.has(fnName)) {
+    const cached = _clientApiCache.get(cacheKey);
+    if (cached && (Date.now() - cached.time < 30000)) {
+      return Promise.resolve(JSON.parse(JSON.stringify(cached.data)));
+    }
+  }
+
+  if (_inFlight.has(cacheKey)) {
+    return _inFlight.get(cacheKey);
+  }
+
+  const promise = new Promise((resolve, reject) => {
     // URL ของ Google Apps Script Web App ของคุณ (ที่ Deploy ใหม่)
     const scriptUrl = "https://script.google.com/macros/s/AKfycbxjUXOExYi3TI3RIvMvFV4LZwChnnAwBCApUn5YNBhFVfpgpKQrUrwe37fpYAmXBB46/exec";
     
@@ -88,7 +117,19 @@ function callServer(fnName, args) {
       console.error("API Error (" + fnName + "):", err);
       reject({ message: "เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์ (" + fnName + ") \u2014 " + err.message });
     });
+  }).then(res => {
+    if (!isMutation && CACHEABLE_APIS.has(fnName)) {
+      _clientApiCache.set(cacheKey, { time: Date.now(), data: res });
+    }
+    _inFlight.delete(cacheKey);
+    return res;
+  }).catch(err => {
+    _inFlight.delete(cacheKey);
+    throw err;
   });
+
+  _inFlight.set(cacheKey, promise);
+  return promise;
 }
 async function api(fnName, ...args) {
   try {
@@ -359,16 +400,32 @@ const app = {
   async init() {
     try {
       if (state.theme === 'dark') document.body.setAttribute('data-theme', 'dark');
-      await this.loadPublicConfig();
       if (state.token) {
         try {
-          const session = await apiQuiet('apiValidateSession', state.token);
-          state.session = session;
-          await this.enterApp();
+          const boot = await apiQuiet('apiBootstrap', state.token);
+          if (boot && boot.session) {
+            state.session = boot.session;
+            if (boot.settings) state._settings = boot.settings;
+            if (boot.classes) state.classesCache = boot.classes;
+            if (boot.subjects) state.subjectsCache = boot.subjects;
+            if (boot.kpi) state._bootKpi = boot.kpi;
+            if (boot.earlyWarning) state._bootEarlyWarning = boot.earlyWarning;
+            await this.enterApp();
+          } else {
+            this.showLogin();
+          }
         } catch (e) {
-          this.showLogin();
+          try {
+            await this.loadPublicConfig();
+            const session = await apiQuiet('apiValidateSession', state.token);
+            state.session = session;
+            await this.enterApp();
+          } catch (err) {
+            this.showLogin();
+          }
         }
       } else {
+        await this.loadPublicConfig();
         this.showLogin();
       }
       this.bindGlobalEvents();
@@ -479,25 +536,27 @@ const app = {
   async spLoadClasses() {
     const box = document.getElementById('sp-class-list');
     this.spBackToClass();
-    box.innerHTML = `<div class="skeleton" style="height:74px;"></div><div class="skeleton" style="height:74px;"></div>`;
     const stepLabel = document.querySelector('#sp-step-class .sp-step-label');
-    let res;
-    try { res = await apiQuiet('apiGetLoginClasses'); }
-    catch (e) {
-      // Picker switched off (or unreachable) \u2014 point at the password form instead.
-      // Only the list is replaced, never the step markup, so flipping the setting
-      // back on repopulates correctly without a page reload.
-      stepLabel.style.display = 'none';
-      box.innerHTML =
-        `<div class="empty-state" style="padding:26px 10px;grid-column:1/-1;">
-           <span class="material-symbols-outlined" style="font-size:34px;color:var(--text-muted);">lock_person</span>
-           <div style="margin-top:8px;font-weight:700;">โรงเรียนปิดการเข้าระบบด้วยการเลือกชื่อ</div>
-           <div class="text-muted-app" style="font-size:12.5px;margin-top:4px;">กรุณาใช้รหัสนักเรียนและรหัสผ่านที่แท็บ "ครู / ผู้ดูแล"</div>
-         </div>`;
-      return;
+    
+    // ตรวจสอบข้อมูลชั้นเรียนที่ preload มาจาก loadPublicConfig (ไม่ต้องรอ Request ซ้ำ)
+    let classes = (state.publicConfig && state.publicConfig.classes) || [];
+    if (!classes.length) {
+      box.innerHTML = `<div class="skeleton" style="height:74px;"></div><div class="skeleton" style="height:74px;"></div>`;
+      try {
+        const res = await apiQuiet('apiGetLoginClasses');
+        classes = res.classes || [];
+      } catch (e) {
+        stepLabel.style.display = 'none';
+        box.innerHTML =
+          `<div class="empty-state" style="padding:26px 10px;grid-column:1/-1;">
+             <span class="material-symbols-outlined" style="font-size:34px;color:var(--text-muted);">lock_person</span>
+             <div style="margin-top:8px;font-weight:700;">โรงเรียนปิดการเข้าระบบด้วยการเลือกชื่อ</div>
+             <div class="text-muted-app" style="font-size:12.5px;margin-top:4px;">กรุณาใช้รหัสนักเรียนและรหัสผ่านที่แท็บ "ครู / ผู้ดูแล"</div>
+           </div>`;
+        return;
+      }
     }
     stepLabel.style.display = '';
-    const classes = res.classes || [];
     if (!classes.length) { box.innerHTML = '<div class="empty-state">ยังไม่มีชั้นเรียนในระบบ</div>'; return; }
     box.innerHTML = classes.map(c => `
       <button type="button" class="sp-class-card" onclick="app.spPickClass('${c.ClassID}', '${ui.escapeHtml(c.ClassName).replace(/'/g, "\\'")}')">
@@ -1139,10 +1198,14 @@ async function renderStaffDashboard() {
   }));
   dashboardHeatmap.load();
 
-  const [kpi, earlyWarning] = await Promise.all([
-    apiQuiet('apiGetDashboardKpi', state.token).catch(() => null),
-    apiQuiet('apiGetEarlyWarning', state.token).catch(() => [])
-  ]);
+  const [kpi, earlyWarning] = (state._bootKpi && state._bootEarlyWarning)
+    ? [state._bootKpi, state._bootEarlyWarning]
+    : await Promise.all([
+        apiQuiet('apiGetDashboardKpi', state.token).catch(() => null),
+        apiQuiet('apiGetEarlyWarning', state.token).catch(() => [])
+      ]);
+  state._bootKpi = null;
+  state._bootEarlyWarning = null;
   if (!kpi) return;
 
   // Colour carries meaning here: green = submitted, red = missing, amber = late.

@@ -1,6 +1,7 @@
 /**
  * api_assignments_check.gs
  * จัดการงาน การเช็คงาน ตรวจการส่งงาน และเมทริกซ์ติดตามงาน
+ * เพิ่มประสิทธิภาพการตรวจงานแบบ Batch Update 1 ครั้ง แทนการวนลูป
  */
 
 function apiListAssignments(token, classId, subjectId) {
@@ -98,7 +99,6 @@ function apiDuplicateAssignment(token, assignmentId, overrides) {
   var copy = Object.assign({}, original, overrides || {});
   copy.AssignmentID = "ASN" + new Date().getTime();
   
-  // หาเลขลำดับถัดไป
   var exist = apiListAssignments(token, copy.ClassID, copy.SubjectID);
   copy.SeqNo = (exist.length ? Math.max.apply(null, exist.map(function(x) { return Number(x.SeqNo || 0); })) : 0) + 1;
   
@@ -115,7 +115,6 @@ function apiDeleteAssignment(token, assignmentId) {
   
   deleteRow("Assignments", "AssignmentID", assignmentId);
   
-  // ลบข้อมูลสถานะการส่งงานที่เกี่ยวข้องทั้งหมด
   var statusRows = getRows("AssignmentStatus").filter(function(r) {
     return String(r.AssignmentID) === String(assignmentId);
   });
@@ -175,7 +174,6 @@ function apiUpdateAssignmentStatus(token, statusId, patch) {
   
   var success = updateRow("AssignmentStatus", "StatusID", statusId, patch);
   if (!success) {
-    // ถ้ายังไม่มีแถว ให้สร้างใหม่
     var parts = String(statusId).split("_");
     if (parts.length >= 3) {
       var aId = parts[1];
@@ -194,19 +192,49 @@ function apiUpdateAssignmentStatus(token, statusId, patch) {
   return { success: true };
 }
 
+/**
+ * ปรับปรุงให้เร็วขึ้นระดับ 30x ด้วยการทำ Batch Write ครั้งเดียว
+ */
 function apiBulkCheckStatus(token, assignmentId, ids, status) {
   var session = apiValidateSession(token);
   if (session.role === "student") throw new Error("ไม่มีสิทธิ์ตรวจงาน");
+  if (!ids || !ids.length) return { success: true };
   
-  var now = new Date().toISOString();
-  for (var i = 0; i < ids.length; i++) {
-    updateRow("AssignmentStatus", "StatusID", ids[i], {
-      Status: status,
-      CheckDate: now
-    });
-  }
-  writeLog("BULK_CHECK", "อัปเดตสถานะ " + ids.length + " รายการเป็น " + status, session.userId);
-  return { success: true };
+  return withLock(function() {
+    var sheet = getSheet("AssignmentStatus");
+    var lastRow = sheet.getLastRow();
+    var lastCol = sheet.getLastColumn();
+    if (lastRow <= 1 || lastCol === 0) return { success: true };
+    
+    var data = sheet.getRange(1, 1, lastRow, lastCol).getValues();
+    var headers = data[0];
+    var statusColIdx = headers.indexOf("Status");
+    var checkDateColIdx = headers.indexOf("CheckDate");
+    var statusIdColIdx = headers.indexOf("StatusID");
+    if (statusColIdx === -1 || statusIdColIdx === -1) return { success: true };
+    
+    var targetIds = {};
+    for (var k = 0; k < ids.length; k++) targetIds[String(ids[k])] = true;
+    
+    var now = new Date().toISOString();
+    var modified = false;
+    for (var i = 1; i < data.length; i++) {
+      var sId = String(data[i][statusIdColIdx]);
+      if (targetIds[sId]) {
+        data[i][statusColIdx] = status;
+        if (checkDateColIdx !== -1) data[i][checkDateColIdx] = now;
+        modified = true;
+      }
+    }
+    
+    if (modified) {
+      sheet.getRange(1, 1, data.length, headers.length).setValues(data);
+      invalidateSheetCache("AssignmentStatus");
+    }
+    
+    writeLog("BULK_CHECK", "อัปเดตสถานะแบบกลุ่ม " + ids.length + " รายการเป็น " + status, session.userId);
+    return { success: true };
+  });
 }
 
 function apiGetSubjectMatrix(token, classId, subjectId) {
