@@ -175,7 +175,10 @@ function apiExportStudentsCsv(token, classId) {
     }).join(",");
     lines.push(line);
   }
-  return lines.join("\r\n");
+  return {
+    csv: lines.join("\r\n"),
+    filename: "students_" + (classId || "all") + ".csv"
+  };
 }
 
 function apiListUsers(token) {

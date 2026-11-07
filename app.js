@@ -1049,9 +1049,11 @@ pages.classgate = async function () {
 
   const res = await apiQuiet('apiGetMyClasses', state.token).catch(() => null);
   const grid = document.getElementById('classgate-grid');
+  if (!grid) return;
   if (!res) { grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1;">โหลดข้อมูลไม่สำเร็จ</div>`; return; }
 
-  if (!res.rows.length) {
+  const rows = Array.isArray(res) ? res : ((res && res.rows) || []);
+  if (!rows.length) {
     grid.innerHTML = `
       <div class="empty-state" style="grid-column:1/-1;padding:40px 20px;">
         <span class="material-symbols-outlined" style="font-size:38px;color:var(--text-muted);">meeting_room</span>
@@ -1061,7 +1063,7 @@ pages.classgate = async function () {
     return;
   }
 
-  grid.innerHTML = res.rows.map((c, i) => `
+  grid.innerHTML = rows.map((c, i) => `
     <button type="button" class="classgate-card${c.ClassID === current ? ' current' : ''}"
       style="animation-delay:${i * 0.05}s" onclick="app.pickClass('${c.ClassID}')">
       ${c.ClassID === current ? '<span class="cg-current-tag">กำลังใช้อยู่</span>' : ''}
@@ -2168,7 +2170,7 @@ const analyticsPage = {
 
     const res = await apiQuiet('apiGetAnalytics', state.token, mode, targetId).catch(() => null);
     if (!res) return;
-    const rows = res.rows;
+    const rows = Array.isArray(res) ? res : ((res && res.rows) || []);
 
     if (!rows.length) {
       document.getElementById('an-tbody').innerHTML = '<tr><td colspan="7" class="text-center py-4 text-muted-app">ไม่มีข้อมูลสำหรับเงื่อนไขนี้</td></tr>';
@@ -3201,8 +3203,9 @@ const reportPage = {
     const res = await apiQuiet('apiGetClassAcademics', state.token, classId).catch(() => null);
     if (!res) { box.innerHTML = `<div class="empty-state">โหลดข้อมูลไม่สำเร็จ</div>`; return; }
 
+    const rawRows = Array.isArray(res) ? res : ((res && res.rows) || []);
     this.data = {
-      rows: res.rows.map(r => ({
+      rows: rawRows.map(r => ({
         'เลขที่': r.No, 'ชื่อ-นามสกุล': r.FullName, 'หน่วยกิต': r.credits,
         'GPA ภาคนี้': r.gpa === null ? '-' : r.gpa.toFixed(2),
         'GPAX สะสม': r.gpax === null ? '-' : r.gpax.toFixed(2),
@@ -3211,7 +3214,7 @@ const reportPage = {
     };
     this.data.csv = ui.toCsv(this.data.rows);
 
-    const body = res.rows.map(r => {
+    const body = rawRows.map(r => {
       const pend = r.pendingCount
         ? `<span class="badge-pill" style="background:color-mix(in srgb, var(--warning) 15%, transparent);color:var(--warning);"
              title="${ui.escapeHtml(r.pending.map(p => p.SubjectName + ' = ' + p.letter).join(', '))}">${r.pendingCount} วิชา</span>`
@@ -3984,7 +3987,7 @@ const settingsPage = {
       <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
         <div class="text-muted-app" style="font-size:12.5px;line-height:1.6;max-width:560px;">
           ภาคเรียนที่ใช้งานอยู่จะถูกประทับลงบนงานและผลการประเมินทุกชิ้นที่บันทึกใหม่<br>
-          สลับภาคเรียนได้ทุกเมื่อ \u2014 ข้อมูลเก่าไม่หาย แค่ถูกแยกเก็บตามภาคเรียนของมัน
+          สลับภาคเรียนได้ทุกเมื่อ — ข้อมูลเก่าไม่หาย แค่ถูกแยกเก็บตามภาคเรียนของมัน
         </div>
         <button class="btn btn-primary btn-sm" onclick="settingsPage.editTerm()"><span class="material-symbols-outlined" style="font-size:16px;">add</span> เพิ่มปีการศึกษา</button>
       </div>
@@ -3994,23 +3997,31 @@ const settingsPage = {
       </table></div>`;
 
     const res = await apiQuiet('apiListAcademicYears', state.token).catch(() => null);
-    if (!res) { document.getElementById('term-tbody').innerHTML = '<tr><td colspan="6" class="text-center py-4 text-muted-app">โหลดข้อมูลไม่สำเร็จ</td></tr>'; return; }
+    const tbody = document.getElementById('term-tbody');
+    if (!tbody) return;
+    if (!res) { tbody.innerHTML = '<tr><td colspan="6" class="text-center py-4 text-muted-app">โหลดข้อมูลไม่สำเร็จ</td></tr>'; return; }
 
-    document.getElementById('term-tbody').innerHTML = res.rows.map(r => `
-      <tr${r.IsActive ? ' style="background:color-mix(in srgb, var(--primary) 5%, transparent);"' : ''}>
-        <td style="font-weight:750;">${ui.escapeHtml(r.Year)}</td>
-        <td>ภาคเรียนที่ ${ui.escapeHtml(r.Semester)}</td>
-        <td style="text-align:center;">${r.assignments}</td>
-        <td style="text-align:center;">${r.results}</td>
-        <td>${r.IsActive
+    const rows = Array.isArray(res) ? res : ((res && res.rows) || []);
+    tbody.innerHTML = rows.map(r => {
+      const isActive = r.IsActive === true || r.IsActive === 'true' || r.IsActive === 1 || r.IsActive === '1';
+      const assignCount = (r.assignments !== undefined && r.assignments !== null) ? r.assignments : '-';
+      const resultCount = (r.results !== undefined && r.results !== null) ? r.results : '-';
+      return `
+      <tr${isActive ? ' style="background:color-mix(in srgb, var(--primary) 5%, transparent);"' : ''}>
+        <td style="font-weight:750;">${ui.escapeHtml(r.Year || '')}</td>
+        <td>ภาคเรียนที่ ${ui.escapeHtml(r.Semester || '')}</td>
+        <td style="text-align:center;">${assignCount}</td>
+        <td style="text-align:center;">${resultCount}</td>
+        <td>${isActive
           ? '<span class="badge-pill" style="background:color-mix(in srgb, var(--success) 14%, transparent);color:var(--success);">กำลังใช้งาน</span>'
           : '<span class="badge-pill" style="background:var(--surface-2);color:var(--text-muted);">เก็บไว้</span>'}</td>
         <td style="white-space:nowrap;">
-          ${r.IsActive ? '' : `<button class="btn btn-sm btn-soft" onclick="settingsPage.activateTerm('${r.YearID}','${ui.escapeHtml(r.Year)}','${ui.escapeHtml(r.Semester)}')">ใช้ภาคเรียนนี้</button> `}
+          ${isActive ? '' : `<button class="btn btn-sm btn-soft" onclick="settingsPage.activateTerm('${r.YearID}','${ui.escapeHtml(r.Year || '')}','${ui.escapeHtml(r.Semester || '')}')">ใช้ภาคเรียนนี้</button> `}
           <button class="btn btn-sm btn-outline" onclick='settingsPage.editTerm(${JSON.stringify(r)})'>แก้ไข</button>
-          ${r.IsActive ? '' : ` <button class="btn btn-sm btn-danger-soft" onclick="settingsPage.deleteTerm('${r.YearID}')">ลบ</button>`}
+          ${isActive ? '' : ` <button class="btn btn-sm btn-danger-soft" onclick="settingsPage.deleteTerm('${r.YearID}')">ลบ</button>`}
         </td>
-      </tr>`).join('') || '<tr><td colspan="6" class="text-center py-4 text-muted-app">ยังไม่มีปีการศึกษา</td></tr>';
+      </tr>`;
+    }).join('') || '<tr><td colspan="6" class="text-center py-4 text-muted-app">ยังไม่มีปีการศึกษา</td></tr>';
   },
 
   editTerm(t) {
@@ -4049,11 +4060,13 @@ const settingsPage = {
     );
     if (!okGo) return;
     const res = await api('apiSetActiveTerm', state.token, id);
-    ui.toast(res.message);
-    // ปี/ภาคเรียนโผล่ในหลายที่ (แถบข้าง หัวเอกสาร) จึงต้องรีเฟรชค่าที่แคชไว้
+    ui.toast((res && res.message) || 'เปลี่ยนภาคเรียนเรียบร้อย');
     state._settings = await apiQuiet('apiGetGeneralSettings', state.token).catch(() => state._settings);
     app.renderSideYearCard(state._settings || {});
-    document.getElementById('brand-year').innerText = 'ปีการศึกษา ' + res.year + ' / ' + res.semester;
+    const brandYr = (res && res.year) || year;
+    const brandSem = (res && res.semester) || semester;
+    const brandEl = document.getElementById('brand-year');
+    if (brandEl) brandEl.innerText = 'ปีการศึกษา ' + brandYr + ' / ' + brandSem;
     settingsPage.renderTerms();
   },
 
@@ -4080,11 +4093,14 @@ const settingsPage = {
         <tbody id="usr-tbody">${ui.skeletonRows(6, 5)}</tbody>
       </table></div>`;
 
-    const users = await apiQuiet('apiListUsers', state.token).catch(() => []);
+    const res = await apiQuiet('apiListUsers', state.token).catch(() => []);
+    const users = Array.isArray(res) ? res : ((res && res.rows) || []);
     const roleLabel = { admin: 'ผู้ดูแลระบบ', teacher: 'ครู', student: 'นักเรียน' };
     const roleColor = { admin: 'var(--danger)', teacher: 'var(--primary)', student: 'var(--accent)' };
+    const tbody = document.getElementById('usr-tbody');
+    if (!tbody) return;
 
-    document.getElementById('usr-tbody').innerHTML = users.map(u => `
+    tbody.innerHTML = users.map(u => `
       <tr data-search="${ui.escapeHtml((u.Username + ' ' + u.FullName + ' ' + u.linkedName).toLowerCase())}">
         <td style="font-weight:700;">${ui.escapeHtml(u.Username)}</td>
         <td><span class="badge-pill" style="background:color-mix(in srgb, ${roleColor[u.Role]} 12%, transparent);color:${roleColor[u.Role]};">${roleLabel[u.Role] || u.Role}</span></td>
@@ -4173,7 +4189,7 @@ const settingsPage = {
     body.innerHTML = `
       <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
         <div class="d-flex gap-2 align-items-center flex-wrap">
-          <select class="form-select form-select-sm" id="log-action" style="width:auto;min-width:170px;" onchange="settingsPage.renderLogs()">
+          <select class="form-select form-select-sm" id="log-action" style="width:auto;min-width:170px;">
             <option value="">ทุกประเภท</option>
           </select>
           <span class="text-muted-app" style="font-size:12.5px;" id="log-count"></span>
@@ -4187,20 +4203,31 @@ const settingsPage = {
 
     const filter = settingsPage._logFilter || '';
     const res = await apiQuiet('apiListLogs', state.token, 200, filter).catch(() => null);
-    if (!res) { document.getElementById('log-tbody').innerHTML = '<tr><td colspan="4" class="text-center py-4 text-muted-app">โหลดข้อมูลไม่สำเร็จ</td></tr>'; return; }
+    const tbody = document.getElementById('log-tbody');
+    if (!tbody) return;
+    if (!res) { tbody.innerHTML = '<tr><td colspan="4" class="text-center py-4 text-muted-app">โหลดข้อมูลไม่สำเร็จ</td></tr>'; return; }
+
+    const rows = Array.isArray(res) ? res : ((res && res.rows) || []);
+    const actions = (res && res.actions) ? res.actions : Array.from(new Set(rows.map(r => r.Action).filter(Boolean)));
+    const shown = (res && res.shown !== undefined) ? res.shown : rows.length;
+    const total = (res && res.total !== undefined) ? res.total : rows.length;
 
     const sel = document.getElementById('log-action');
-    sel.innerHTML = '<option value="">ทุกประเภท</option>' +
-      res.actions.map(a => `<option value="${ui.escapeHtml(a)}" ${a === filter ? 'selected' : ''}>${ui.escapeHtml(a)}</option>`).join('');
-    sel.onchange = () => { settingsPage._logFilter = sel.value; settingsPage.renderLogs(); };
+    if (sel) {
+      sel.innerHTML = '<option value="">ทุกประเภท</option>' +
+        actions.map(a => `<option value="${ui.escapeHtml(a)}" ${a === filter ? 'selected' : ''}>${ui.escapeHtml(a)}</option>`).join('');
+      sel.onchange = () => { settingsPage._logFilter = sel.value; settingsPage.renderLogs(); };
+    }
 
-    document.getElementById('log-count').textContent = `แสดง ${res.shown} จากทั้งหมด ${res.total} รายการ`;
-    document.getElementById('log-tbody').innerHTML = res.rows.map(l => `
+    const logCountEl = document.getElementById('log-count');
+    if (logCountEl) logCountEl.textContent = `แสดง ${shown} จากทั้งหมด ${total} รายการ`;
+
+    tbody.innerHTML = rows.map(l => `
       <tr>
         <td style="font-size:12.5px;color:var(--text-muted);white-space:nowrap;">${ui.fmtDateTime ? ui.fmtDateTime(l.Timestamp) : ui.fmtDate(l.Timestamp)}</td>
-        <td style="font-size:12.5px;">${ui.escapeHtml(l.who)}</td>
-        <td><span class="badge-pill" style="background:var(--surface-2);font-size:11px;">${ui.escapeHtml(l.Action)}</span></td>
-        <td style="font-size:12.5px;color:var(--text-secondary);">${ui.escapeHtml(l.Detail || '')}</td>
+        <td style="font-size:12.5px;">${ui.escapeHtml(l.who || l.UserID || '-')}</td>
+        <td><span class="badge-pill" style="background:var(--surface-2);font-size:11px;">${ui.escapeHtml(l.Action || '')}</span></td>
+        <td style="font-size:12.5px;color:var(--text-secondary);">${ui.escapeHtml(l.Detail || l.Details || '')}</td>
       </tr>`).join('') || '<tr><td colspan="4" class="text-center py-4 text-muted-app">ยังไม่มีบันทึก</td></tr>';
   },
 
@@ -4219,9 +4246,12 @@ const settingsPage = {
   async renderClasses() {
     const body = document.getElementById('settings-body');
     body.innerHTML = `<div class="d-flex justify-content-end mb-2"><button class="btn btn-primary btn-sm" onclick="settingsPage.editClass()"><span class="material-symbols-outlined" style="font-size:16px;">add</span> เพิ่มห้องเรียน</button></div><div class="table-card"><table class="app-table"><thead><tr><th>ชื่อห้อง</th><th>ระดับชั้น</th><th>ห้อง</th><th>นักเรียน</th><th></th></tr></thead><tbody id="cls-tbody">${ui.skeletonRows(5,4)}</tbody></table></div>`;
-    const list = await apiQuiet('apiListClasses', state.token).catch(() => []);
+    const res = await apiQuiet('apiListClasses', state.token).catch(() => []);
+    const list = Array.isArray(res) ? res : ((res && res.rows) || []);
     state.classesCache = list;
-    document.getElementById('cls-tbody').innerHTML = list.map(c => `
+    const tbody = document.getElementById('cls-tbody');
+    if (!tbody) return;
+    tbody.innerHTML = list.map(c => `
       <tr><td><b>${ui.escapeHtml(c.ClassName)}</b></td><td>${ui.escapeHtml(c.Level||'-')}</td><td>${ui.escapeHtml(c.Room||'-')}</td><td>${c.StudentCount}</td>
       <td><button class="btn btn-sm btn-outline" onclick='settingsPage.editClass(${JSON.stringify(c)})'>แก้ไข</button> <button class="btn btn-sm btn-danger-soft" onclick="settingsPage.deleteClass('${c.ClassID}')">ลบ</button></td></tr>`).join('') || '<tr><td colspan="5" class="text-center py-4 text-muted-app">ยังไม่มีห้องเรียน</td></tr>';
   },
@@ -4244,9 +4274,13 @@ const settingsPage = {
   async renderSubjects() {
     const body = document.getElementById('settings-body');
     body.innerHTML = `<div class="d-flex justify-content-end mb-2"><button class="btn btn-primary btn-sm" onclick="settingsPage.editSubject()"><span class="material-symbols-outlined" style="font-size:16px;">add</span> เพิ่มวิชา</button></div><div class="table-card"><table class="app-table"><thead><tr><th>ชื่อวิชา</th><th>รหัสวิชา</th><th style="text-align:center;">หน่วยกิต</th><th>ครูผู้สอน</th><th></th></tr></thead><tbody id="sub-tbody">${ui.skeletonRows(4,4)}</tbody></table></div>`;
-    const [subjects, teachers] = await Promise.all([apiQuiet('apiListSubjects', state.token).catch(()=>[]), apiQuiet('apiListTeachers', state.token).catch(()=>[])]);
+    const [subRes, tchRes] = await Promise.all([apiQuiet('apiListSubjects', state.token).catch(()=>[]), apiQuiet('apiListTeachers', state.token).catch(()=>[])]);
+    const subjects = Array.isArray(subRes) ? subRes : ((subRes && subRes.rows) || []);
+    const teachers = Array.isArray(tchRes) ? tchRes : ((tchRes && tchRes.rows) || []);
     state.subjectsCache = subjects; this._teachers = teachers;
-    document.getElementById('sub-tbody').innerHTML = subjects.map(s => `
+    const tbody = document.getElementById('sub-tbody');
+    if (!tbody) return;
+    tbody.innerHTML = subjects.map(s => `
       <tr><td><b>${ui.escapeHtml(s.SubjectName)}</b></td><td>${ui.escapeHtml(s.SubjectCode||'-')}</td><td style="text-align:center;">${s.Credit === undefined || s.Credit === '' ? '1.0' : s.Credit}</td><td>${ui.escapeHtml(s.TeacherName||'-')}</td>
       <td><button class="btn btn-sm btn-outline" onclick='settingsPage.editSubject(${JSON.stringify(s)})'>แก้ไข</button> <button class="btn btn-sm btn-danger-soft" onclick="settingsPage.deleteSubject('${s.SubjectID}')">ลบ</button></td></tr>`).join('') || '<tr><td colspan="5" class="text-center py-4 text-muted-app">ยังไม่มีวิชา</td></tr>';
   },
@@ -4291,10 +4325,14 @@ const settingsPage = {
     settingsPage.loadStudentTable();
   },
   async loadStudentTable() {
-    const classId = document.getElementById('std-class-filter').value;
-    const list = await apiQuiet('apiListStudents', state.token, classId).catch(() => []);
+    const filterEl = document.getElementById('std-class-filter');
+    const classId = filterEl ? filterEl.value : '';
+    const res = await apiQuiet('apiListStudents', state.token, classId).catch(() => []);
+    const list = Array.isArray(res) ? res : ((res && res.rows) || []);
     settingsPage._students = list;
-    document.getElementById('std-tbody').innerHTML = list.map(s => `
+    const tbody = document.getElementById('std-tbody');
+    if (!tbody) return;
+    tbody.innerHTML = list.map(s => `
       <tr><td>${s.No}</td><td>${ui.escapeHtml(s.StudentCode)}</td><td class="d-flex align-items-center gap-2"><div class="avatar">${ui.initials(s.FirstName,s.LastName)}</div>${ui.escapeHtml((s.Title||'')+s.FirstName+' '+s.LastName)}</td><td>${ui.escapeHtml(s.Gender||'-')}</td>
       <td><span class="badge-pill" style="background:rgba(16,185,129,.12);color:var(--success);">${s.Status}</span></td>
       <td class="d-flex gap-1 flex-wrap"><button class="btn btn-sm btn-outline" onclick="app.navigate('studentdetail',{id:'${s.StudentID}'})">ดู</button> <button class="btn btn-sm btn-outline" onclick='settingsPage.editStudent(${JSON.stringify(s)})'>แก้ไข</button> <button class="btn btn-sm btn-outline" title="รีเซ็ตรหัสผ่าน" onclick="settingsPage.resetPassword('${s.StudentID}','${ui.escapeHtml((s.Title||'')+s.FirstName+' '+s.LastName)}')"><span class="material-symbols-outlined" style="font-size:15px;">key</span></button> <button class="btn btn-sm btn-danger-soft" onclick="settingsPage.deleteStudent('${s.StudentID}')">ลบ</button></td></tr>`).join('') || '<tr><td colspan="6" class="text-center py-4 text-muted-app">ยังไม่มีนักเรียนในห้องนี้</td></tr>';
@@ -4322,7 +4360,11 @@ const settingsPage = {
   async exportStudents() {
     const classId = document.getElementById('std-class-filter').value;
     const res = await apiQuiet('apiExportStudentsCsv', state.token, classId).catch(() => null);
-    if (res) ui.downloadCsv(res.csv, res.filename);
+    if (res) {
+      const csvData = typeof res === 'string' ? res : (res.csv || '');
+      const filename = (res && res.filename) || ('students_' + (classId || 'all') + '.csv');
+      ui.downloadCsv(csvData, filename);
+    }
   },
   openImport() {
     const body = `
@@ -4368,8 +4410,11 @@ const settingsPage = {
   async renderTeachers() {
     const body = document.getElementById('settings-body');
     body.innerHTML = `<div class="d-flex justify-content-end mb-2"><button class="btn btn-primary btn-sm" onclick="settingsPage.editTeacher()"><span class="material-symbols-outlined" style="font-size:16px;">add</span> เพิ่มครู</button></div><div class="table-card"><table class="app-table"><thead><tr><th>ชื่อ-นามสกุล</th><th>อีเมล</th><th>วิชาที่สอน</th><th>ห้องที่สอน</th><th></th></tr></thead><tbody id="tch-tbody">${ui.skeletonRows(5,4)}</tbody></table></div>`;
-    const list = await apiQuiet('apiListTeachers', state.token).catch(() => []);
-    document.getElementById('tch-tbody').innerHTML = list.map(t => `
+    const res = await apiQuiet('apiListTeachers', state.token).catch(() => []);
+    const list = Array.isArray(res) ? res : ((res && res.rows) || []);
+    const tbody = document.getElementById('tch-tbody');
+    if (!tbody) return;
+    tbody.innerHTML = list.map(t => `
       <tr><td><b>${ui.escapeHtml(t.Title+t.FirstName+' '+t.LastName)}</b></td><td>${ui.escapeHtml(t.Email||'-')}</td><td>${(t.SubjectNames||[]).join(', ')||'-'}</td><td>${(t.ClassNames||[]).join(', ')||'-'}</td>
       <td class="d-flex gap-1 flex-wrap"><button class="btn btn-sm btn-outline" onclick='settingsPage.editTeacher(${JSON.stringify(t)})'>แก้ไข</button> <button class="btn btn-sm btn-outline" title="รีเซ็ตรหัสผ่าน" onclick="settingsPage.resetPassword('${t.TeacherID}','${ui.escapeHtml(t.Title+t.FirstName+' '+t.LastName)}')"><span class="material-symbols-outlined" style="font-size:15px;">key</span></button> <button class="btn btn-sm btn-danger-soft" onclick="settingsPage.deleteTeacher('${t.TeacherID}')">ลบ</button></td></tr>`).join('') || '<tr><td colspan="5" class="text-center py-4 text-muted-app">ยังไม่มีครู</td></tr>';
   },
@@ -4425,9 +4470,12 @@ const settingsPage = {
         <button class="btn btn-primary btn-sm" onclick="settingsPage.editScoreSetting()"><span class="material-symbols-outlined" style="font-size:16px;">add</span> เพิ่มรายการคะแนน</button>
       </div>
       <div class="table-card"><table class="app-table"><thead><tr><th>รายการ</th><th>คะแนนเต็ม</th><th>หมวด</th><th>วิธีได้คะแนน</th><th></th></tr></thead><tbody id="ss-tbody">${ui.skeletonRows(5,4)}</tbody></table></div>`;
-    const list = await apiQuiet('apiListScoreSettings', state.token).catch(() => []);
+    const res = await apiQuiet('apiListScoreSettings', state.token).catch(() => []);
+    const list = Array.isArray(res) ? res : ((res && res.rows) || []);
     const catLabel = { collect: 'คะแนนเก็บ', midterm: 'กลางภาค', final: 'ปลายภาค' };
-    document.getElementById('ss-tbody').innerHTML = list.map(s => {
+    const tbody = document.getElementById('ss-tbody');
+    if (!tbody) return;
+    tbody.innerHTML = list.map(s => {
       const auto = /งาน/.test(s.ComponentName) || /พฤติกรรม/.test(s.ComponentName);
       return `<tr><td><b>${ui.escapeHtml(s.ComponentName)}</b></td><td>${s.FullScore}</td><td>${catLabel[s.Category]||s.Category}</td>
       <td><span class="badge-pill" style="background:${auto?'color-mix(in srgb, var(--primary) 12%, transparent)':'color-mix(in srgb, var(--success) 12%, transparent)'};color:${auto?'var(--primary)':'var(--success)'};">${auto?'คำนวณอัตโนมัติ':'กรอกเอง'}</span></td>
@@ -4500,8 +4548,11 @@ const settingsPage = {
   async renderBehaviorTypes() {
     const body = document.getElementById('settings-body');
     body.innerHTML = `<div class="d-flex justify-content-end mb-2"><button class="btn btn-primary btn-sm" onclick="settingsPage.editBehaviorType()"><span class="material-symbols-outlined" style="font-size:16px;">add</span> เพิ่มประเภท</button></div><div class="table-card"><table class="app-table"><thead><tr><th>ประเภท</th><th>คะแนนเริ่มต้น</th><th>หมวด</th><th></th></tr></thead><tbody id="bt-tbody">${ui.skeletonRows(4,4)}</tbody></table></div>`;
-    const list = await apiQuiet('apiListBehaviorTypes', state.token).catch(() => []);
-    document.getElementById('bt-tbody').innerHTML = list.map(b => `
+    const res = await apiQuiet('apiListBehaviorTypes', state.token).catch(() => []);
+    const list = Array.isArray(res) ? res : ((res && res.rows) || []);
+    const tbody = document.getElementById('bt-tbody');
+    if (!tbody) return;
+    tbody.innerHTML = list.map(b => `
       <tr><td><b>${ui.escapeHtml(b.TypeName)}</b></td><td style="color:${Number(b.DefaultPoints)>=0?'var(--success)':'var(--danger)'};">${b.DefaultPoints>0?'+':''}${b.DefaultPoints}</td><td>${b.Category==='positive'?'บวก':'ลบ'}</td>
       <td><button class="btn btn-sm btn-outline" onclick='settingsPage.editBehaviorType(${JSON.stringify(b)})'>แก้ไข</button> <button class="btn btn-sm btn-danger-soft" onclick="settingsPage.deleteBehaviorType('${b.TypeID}')">ลบ</button></td></tr>`).join('') || '<tr><td colspan="4" class="text-center py-4 text-muted-app">ยังไม่มีประเภทพฤติกรรม</td></tr>';
   },
@@ -4532,9 +4583,12 @@ const settingsPage = {
         <button class="btn btn-primary btn-sm" onclick="settingsPage.editRubric()"><span class="material-symbols-outlined" style="font-size:16px;">add</span> สร้างเกณฑ์</button>
       </div>
       <div class="table-card"><table class="app-table"><thead><tr><th>ชื่อเกณฑ์</th><th>วิชา</th><th>หัวข้อประเมิน</th><th>คะแนนเต็มรวม</th><th></th></tr></thead><tbody id="rb-tbody">${ui.skeletonRows(5,3)}</tbody></table></div>`;
-    const list = await apiQuiet('apiListRubrics', state.token, null).catch(() => []);
+    const res = await apiQuiet('apiListRubrics', state.token, null).catch(() => []);
+    const list = Array.isArray(res) ? res : ((res && res.rows) || []);
     settingsPage._rubrics = list;
-    document.getElementById('rb-tbody').innerHTML = list.length ? list.map((r, i) => `
+    const tbody = document.getElementById('rb-tbody');
+    if (!tbody) return;
+    tbody.innerHTML = list.length ? list.map((r, i) => `
       <tr><td style="font-weight:700;">${ui.escapeHtml(r.Name)}</td>
       <td>${r.SubjectID === 'ALL' || !r.SubjectID ? 'ทุกวิชา' : ui.escapeHtml((state.subjectsCache.find(s=>s.SubjectID===r.SubjectID)||{}).SubjectName || '-')}</td>
       <td style="font-size:12.5px;">${r.criteria.map(c => ui.escapeHtml(c.name) + ' (' + c.max + ')').join(' · ')}</td>

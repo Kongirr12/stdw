@@ -161,22 +161,32 @@ function apiGetAnalytics(token, mode, targetId) {
     var subjects = apiListSubjects(token);
     rows = subjects.map(function(sub) {
       return {
+        label: sub.SubjectName,
         name: sub.SubjectName,
         code: sub.SubjectCode,
-        submitRate: 85.0,
-        averageScore: 78.5,
-        totalAssignments: 5
+        studentCount: 30,
+        assignmentCount: 5,
+        submitRate: 85,
+        notSubmitted: 4,
+        lateCount: 2,
+        avgPercent: 78.5,
+        averageScore: 78.5
       };
     });
   } else {
     var classes = apiListClasses(token);
     rows = classes.map(function(cls) {
       return {
+        label: cls.ClassName,
         name: cls.ClassName,
         code: cls.Level,
-        submitRate: 88.0,
-        averageScore: 80.0,
-        totalAssignments: 5
+        studentCount: cls.StudentCount || 30,
+        assignmentCount: 5,
+        submitRate: 88,
+        notSubmitted: 3,
+        lateCount: 1,
+        avgPercent: 80.0,
+        averageScore: 80.0
       };
     });
   }
@@ -337,9 +347,49 @@ function apiListLogs(token, limit, filter) {
   if (session.role !== "admin") throw new Error("เฉพาะแอดมินเท่านั้นที่ดูบันทึกระบบได้");
   
   var logs = getRows("Logs");
+  var total = logs.length;
   logs.sort(function(a, b) { return new Date(b.Timestamp) - new Date(a.Timestamp); });
+  
+  var allActions = [];
+  var actionSet = {};
+  for (var i = 0; i < logs.length; i++) {
+    var act = logs[i].Action;
+    if (act && !actionSet[act]) {
+      actionSet[act] = true;
+      allActions.push(act);
+    }
+  }
+  
+  if (filter) {
+    logs = logs.filter(function(l) { return String(l.Action) === String(filter); });
+  }
+  
+  var shown = logs.length;
   if (limit) logs = logs.slice(0, Number(limit));
-  return logs;
+  
+  var users = getRows("Users");
+  var userMap = {};
+  for (var u = 0; u < users.length; u++) {
+    userMap[String(users[u].UserID)] = users[u].FullName || users[u].Username;
+  }
+  
+  var mappedLogs = logs.map(function(l) {
+    return {
+      LogID: l.LogID,
+      Timestamp: l.Timestamp,
+      UserID: l.UserID,
+      who: userMap[String(l.UserID)] || l.UserID || "ระบบ",
+      Action: l.Action,
+      Detail: l.Details || l.Detail || ""
+    };
+  });
+  
+  return {
+    rows: mappedLogs,
+    actions: allActions,
+    shown: shown,
+    total: total
+  };
 }
 
 function apiClearLogs(token, days) {

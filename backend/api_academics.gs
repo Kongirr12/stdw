@@ -28,26 +28,52 @@ function apiListClasses(token) {
 function apiGetMyClasses(token) {
   var session = apiValidateSession(token);
   var classes = apiListClasses(token);
-  if (session.role === "admin") return classes;
+  var assignments = getRows("Assignments");
+  var statuses = getRows("AssignmentStatus");
   
-  // สำหรับครู: กรองเฉพาะห้องที่ตนเป็นที่ปรึกษา หรือห้องที่มีวิชาที่ตนสอน
-  var myTeacherId = session.refId;
-  var mySubjects = getRows("Subjects").filter(function(s) {
-    return String(s.TeacherID) === String(myTeacherId);
-  });
-  
-  var allowedClasses = {};
-  for (var i = 0; i < mySubjects.length; i++) {
-    var cids = String(mySubjects[i].ClassIDs || "").split(",");
-    for (var k = 0; k < cids.length; k++) {
-      var cid = cids[k].trim();
-      if (cid) allowedClasses[cid] = true;
+  var filtered = classes;
+  if (session.role === "teacher") {
+    var myTeacherId = session.refId;
+    var mySubjects = getRows("Subjects").filter(function(s) {
+      return String(s.TeacherID) === String(myTeacherId);
+    });
+    
+    var allowedClasses = {};
+    for (var i = 0; i < mySubjects.length; i++) {
+      var cids = String(mySubjects[i].ClassIDs || "").split(",");
+      for (var k = 0; k < cids.length; k++) {
+        var cid = cids[k].trim();
+        if (cid) allowedClasses[cid] = true;
+      }
     }
+    
+    filtered = classes.filter(function(c) {
+      return String(c.AdvisorID) === String(myTeacherId) || allowedClasses[String(c.ClassID)];
+    });
   }
   
-  return classes.filter(function(c) {
-    return String(c.AdvisorID) === String(myTeacherId) || allowedClasses[String(c.ClassID)];
+  var mapped = filtered.map(function(c) {
+    var classAssignments = assignments.filter(function(a) { return String(a.ClassID) === String(c.ClassID); });
+    var aCount = classAssignments.length;
+    var aIds = {};
+    for (var j = 0; j < classAssignments.length; j++) aIds[String(classAssignments[j].AssignmentID)] = true;
+    
+    var pendingCount = statuses.filter(function(st) {
+      return aIds[String(st.AssignmentID)] && st.Status === "not_submitted";
+    }).length;
+    
+    return {
+      ClassID: c.ClassID,
+      ClassName: c.ClassName,
+      Level: c.Level || "",
+      Room: c.Room || "",
+      StudentCount: c.StudentCount || 0,
+      AssignmentCount: aCount,
+      PendingCount: pendingCount
+    };
   });
+  
+  return { rows: mapped };
 }
 
 function apiSaveClass(token, classData) {
@@ -107,7 +133,30 @@ function apiDeleteSubject(token, subjectId) {
 }
 
 function apiListAcademicYears(token) {
-  return getRows("AcademicYears");
+  var rows = getRows("AcademicYears");
+  var assignments = getRows("Assignments");
+  var results = getRows("TermResults");
+  
+  var mapped = rows.map(function(r) {
+    var aCount = assignments.filter(function(a) { 
+      return String(a.AcademicYear) === String(r.Year) && String(a.Semester) === String(r.Semester); 
+    }).length;
+    var rCount = results.filter(function(res) { 
+      return String(res.AcademicYear) === String(r.Year) && String(res.Semester) === String(r.Semester); 
+    }).length;
+    return {
+      YearID: r.YearID,
+      Year: r.Year,
+      Semester: r.Semester,
+      IsActive: (r.IsActive === true || r.IsActive === "true" || r.IsActive === 1 || r.IsActive === "1"),
+      StartDate: r.StartDate || "",
+      EndDate: r.EndDate || "",
+      assignments: aCount,
+      results: rCount
+    };
+  });
+  
+  return { rows: mapped };
 }
 
 function apiSaveAcademicYear(token, data) {
@@ -157,5 +206,10 @@ function apiSetActiveTerm(token, id) {
   }
   
   writeLog("SET_ACTIVE_TERM", "ตั้งภาคเรียนปัจจุบัน: " + id, session.userId);
-  return { success: true };
+  return { 
+    success: true, 
+    message: "เปลี่ยนภาคเรียนเป็น " + (activeYear ? (activeYear.Year + "/" + activeYear.Semester) : "") + " เรียบร้อย",
+    year: activeYear ? String(activeYear.Year) : "",
+    semester: activeYear ? String(activeYear.Semester) : ""
+  };
 }

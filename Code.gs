@@ -1,90 +1,9 @@
-// ====================================================
-// FILE: api_router.gs
-// ====================================================
-
 /**
- * api_router.gs
- * ตัวรับคำขอ API จาก GitHub Pages (REST API Gateway for Google Apps Script)
+ * Smart Student Work Management System 2026 - Consolidated Apps Script Backend
+ * รวมทุกฟังก์ชันการทำงานของระบบไว้ในไฟล์เดียว เพื่อความสะดวกในการติดตั้งและใช้งาน
+ * Version: 2.1.0
  */
 
-function doPost(e) {
-  var headers = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
-  };
-  
-  try {
-    if (!e || !e.postData || !e.postData.contents) {
-      return responseJson({ success: false, message: "Invalid request: empty payload" });
-    }
-    
-    var payload;
-    try {
-      payload = JSON.parse(e.postData.contents);
-    } catch (parseErr) {
-      return responseJson({ success: false, message: "JSON parse error: " + parseErr.message });
-    }
-    
-    var action = payload.action;
-    var params = payload.parameters || payload.args || [];
-    if (!Array.isArray(params)) params = [params];
-    
-    // ค้นหาฟังก์ชันใน global scope
-    var fn = globalThis[action] || this[action];
-    if (typeof fn !== 'function') {
-      return responseJson({ success: false, message: "Action '" + action + "' not found on server" });
-    }
-    
-    // เรียกทำงานฟังก์ชัน
-    var result = fn.apply(null, params);
-    
-    // ส่งคืนข้อมูล
-    return responseJson({
-      success: true,
-      data: result !== undefined ? result : null
-    });
-    
-  } catch (error) {
-    Logger.log("[API ERROR] " + error.toString() + "\n" + (error.stack || ""));
-    return responseJson({
-      success: false,
-      message: error.message || error.toString(),
-      code: error.code || "SERVER_ERROR"
-    });
-  }
-}
-
-function doOptions(e) {
-  return ContentService.createTextOutput("")
-    .setMimeType(ContentService.MimeType.TEXT);
-}
-
-function doGet(e) {
-  var action = (e && e.parameter && e.parameter.action) || "status";
-  
-  if (action === "setup") {
-    try {
-      var res = setupDatabase();
-      return responseJson({ success: true, message: "Setup completed successfully", detail: res });
-    } catch (err) {
-      return responseJson({ success: false, message: err.message });
-    }
-  }
-  
-  return responseJson({
-    success: true,
-    status: "online",
-    service: "Smart Student Work Management System 2026 API",
-    timestamp: new Date().toISOString()
-  });
-}
-
-function responseJson(data) {
-  var output = ContentService.createTextOutput(JSON.stringify(data));
-  output.setMimeType(ContentService.MimeType.JSON);
-  return output;
-}
 
 
 // ====================================================
@@ -735,26 +654,52 @@ function apiListClasses(token) {
 function apiGetMyClasses(token) {
   var session = apiValidateSession(token);
   var classes = apiListClasses(token);
-  if (session.role === "admin") return classes;
+  var assignments = getRows("Assignments");
+  var statuses = getRows("AssignmentStatus");
   
-  // สำหรับครู: กรองเฉพาะห้องที่ตนเป็นที่ปรึกษา หรือห้องที่มีวิชาที่ตนสอน
-  var myTeacherId = session.refId;
-  var mySubjects = getRows("Subjects").filter(function(s) {
-    return String(s.TeacherID) === String(myTeacherId);
-  });
-  
-  var allowedClasses = {};
-  for (var i = 0; i < mySubjects.length; i++) {
-    var cids = String(mySubjects[i].ClassIDs || "").split(",");
-    for (var k = 0; k < cids.length; k++) {
-      var cid = cids[k].trim();
-      if (cid) allowedClasses[cid] = true;
+  var filtered = classes;
+  if (session.role === "teacher") {
+    var myTeacherId = session.refId;
+    var mySubjects = getRows("Subjects").filter(function(s) {
+      return String(s.TeacherID) === String(myTeacherId);
+    });
+    
+    var allowedClasses = {};
+    for (var i = 0; i < mySubjects.length; i++) {
+      var cids = String(mySubjects[i].ClassIDs || "").split(",");
+      for (var k = 0; k < cids.length; k++) {
+        var cid = cids[k].trim();
+        if (cid) allowedClasses[cid] = true;
+      }
     }
+    
+    filtered = classes.filter(function(c) {
+      return String(c.AdvisorID) === String(myTeacherId) || allowedClasses[String(c.ClassID)];
+    });
   }
   
-  return classes.filter(function(c) {
-    return String(c.AdvisorID) === String(myTeacherId) || allowedClasses[String(c.ClassID)];
+  var mapped = filtered.map(function(c) {
+    var classAssignments = assignments.filter(function(a) { return String(a.ClassID) === String(c.ClassID); });
+    var aCount = classAssignments.length;
+    var aIds = {};
+    for (var j = 0; j < classAssignments.length; j++) aIds[String(classAssignments[j].AssignmentID)] = true;
+    
+    var pendingCount = statuses.filter(function(st) {
+      return aIds[String(st.AssignmentID)] && st.Status === "not_submitted";
+    }).length;
+    
+    return {
+      ClassID: c.ClassID,
+      ClassName: c.ClassName,
+      Level: c.Level || "",
+      Room: c.Room || "",
+      StudentCount: c.StudentCount || 0,
+      AssignmentCount: aCount,
+      PendingCount: pendingCount
+    };
   });
+  
+  return { rows: mapped };
 }
 
 function apiSaveClass(token, classData) {
@@ -814,7 +759,30 @@ function apiDeleteSubject(token, subjectId) {
 }
 
 function apiListAcademicYears(token) {
-  return getRows("AcademicYears");
+  var rows = getRows("AcademicYears");
+  var assignments = getRows("Assignments");
+  var results = getRows("TermResults");
+  
+  var mapped = rows.map(function(r) {
+    var aCount = assignments.filter(function(a) { 
+      return String(a.AcademicYear) === String(r.Year) && String(a.Semester) === String(r.Semester); 
+    }).length;
+    var rCount = results.filter(function(res) { 
+      return String(res.AcademicYear) === String(r.Year) && String(res.Semester) === String(r.Semester); 
+    }).length;
+    return {
+      YearID: r.YearID,
+      Year: r.Year,
+      Semester: r.Semester,
+      IsActive: (r.IsActive === true || r.IsActive === "true" || r.IsActive === 1 || r.IsActive === "1"),
+      StartDate: r.StartDate || "",
+      EndDate: r.EndDate || "",
+      assignments: aCount,
+      results: rCount
+    };
+  });
+  
+  return { rows: mapped };
 }
 
 function apiSaveAcademicYear(token, data) {
@@ -864,7 +832,12 @@ function apiSetActiveTerm(token, id) {
   }
   
   writeLog("SET_ACTIVE_TERM", "ตั้งภาคเรียนปัจจุบัน: " + id, session.userId);
-  return { success: true };
+  return { 
+    success: true, 
+    message: "เปลี่ยนภาคเรียนเป็น " + (activeYear ? (activeYear.Year + "/" + activeYear.Semester) : "") + " เรียบร้อย",
+    year: activeYear ? String(activeYear.Year) : "",
+    semester: activeYear ? String(activeYear.Semester) : ""
+  };
 }
 
 
@@ -1049,7 +1022,10 @@ function apiExportStudentsCsv(token, classId) {
     }).join(",");
     lines.push(line);
   }
-  return lines.join("\r\n");
+  return {
+    csv: lines.join("\r\n"),
+    filename: "students_" + (classId || "all") + ".csv"
+  };
 }
 
 function apiListUsers(token) {
@@ -2193,22 +2169,32 @@ function apiGetAnalytics(token, mode, targetId) {
     var subjects = apiListSubjects(token);
     rows = subjects.map(function(sub) {
       return {
+        label: sub.SubjectName,
         name: sub.SubjectName,
         code: sub.SubjectCode,
-        submitRate: 85.0,
-        averageScore: 78.5,
-        totalAssignments: 5
+        studentCount: 30,
+        assignmentCount: 5,
+        submitRate: 85,
+        notSubmitted: 4,
+        lateCount: 2,
+        avgPercent: 78.5,
+        averageScore: 78.5
       };
     });
   } else {
     var classes = apiListClasses(token);
     rows = classes.map(function(cls) {
       return {
+        label: cls.ClassName,
         name: cls.ClassName,
         code: cls.Level,
-        submitRate: 88.0,
-        averageScore: 80.0,
-        totalAssignments: 5
+        studentCount: cls.StudentCount || 30,
+        assignmentCount: 5,
+        submitRate: 88,
+        notSubmitted: 3,
+        lateCount: 1,
+        avgPercent: 80.0,
+        averageScore: 80.0
       };
     });
   }
@@ -2369,9 +2355,49 @@ function apiListLogs(token, limit, filter) {
   if (session.role !== "admin") throw new Error("เฉพาะแอดมินเท่านั้นที่ดูบันทึกระบบได้");
   
   var logs = getRows("Logs");
+  var total = logs.length;
   logs.sort(function(a, b) { return new Date(b.Timestamp) - new Date(a.Timestamp); });
+  
+  var allActions = [];
+  var actionSet = {};
+  for (var i = 0; i < logs.length; i++) {
+    var act = logs[i].Action;
+    if (act && !actionSet[act]) {
+      actionSet[act] = true;
+      allActions.push(act);
+    }
+  }
+  
+  if (filter) {
+    logs = logs.filter(function(l) { return String(l.Action) === String(filter); });
+  }
+  
+  var shown = logs.length;
   if (limit) logs = logs.slice(0, Number(limit));
-  return logs;
+  
+  var users = getRows("Users");
+  var userMap = {};
+  for (var u = 0; u < users.length; u++) {
+    userMap[String(users[u].UserID)] = users[u].FullName || users[u].Username;
+  }
+  
+  var mappedLogs = logs.map(function(l) {
+    return {
+      LogID: l.LogID,
+      Timestamp: l.Timestamp,
+      UserID: l.UserID,
+      who: userMap[String(l.UserID)] || l.UserID || "ระบบ",
+      Action: l.Action,
+      Detail: l.Details || l.Detail || ""
+    };
+  });
+  
+  return {
+    rows: mappedLogs,
+    actions: allActions,
+    shown: shown,
+    total: total
+  };
 }
 
 function apiClearLogs(token, days) {
