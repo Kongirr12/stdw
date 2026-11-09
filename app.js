@@ -500,6 +500,9 @@ const app = {
   },
 
   showLogin() {
+    if (!state.pendingRoute) {
+      state.pendingRoute = this.parseCurrentRoute();
+    }
     store.remove('sswm_token');
     store.remove('sswm_session');
     store.remove('sswm_boot_cache');
@@ -752,6 +755,10 @@ const app = {
     if (state.token) { try { await apiQuiet('apiLogout', state.token); } catch (e) {} }
     state.token = null; state.session = null;
     this.showLogin();
+    try {
+      const rootUrl = this.getBasePath() + '/';
+      window.history.replaceState(null, '', rootUrl);
+    } catch (e) {}
     if (!silent) ui.toast('ออกจากระบบแล้ว', 'info');
   },
 
@@ -791,14 +798,21 @@ const app = {
     this.loadNotifBadge();
 
     
+    // Determine initial route from URL or stored pending route
+    const currentRoute = this.parseCurrentRoute();
+    let targetPage = (state.pendingRoute && state.pendingRoute.page) || currentRoute.page || 'dashboard';
+    let targetParams = (state.pendingRoute && state.pendingRoute.params) || currentRoute.params || {};
+    state.pendingRoute = null;
+
     if (state.session.role === 'teacher') {
-      
-      
       this.restoreActiveClass();
-      if (!state.activeClass) { this.navigate('classgate'); return; }
+      if (!state.activeClass && this._classFreePages.indexOf(targetPage) === -1) {
+        this.navigate('classgate', null, true);
+        return;
+      }
     }
     this.renderClassPill();
-    this.navigate('dashboard');
+    this.navigate(targetPage, targetParams, true);
   },
 
   
@@ -939,28 +953,110 @@ const app = {
    
   _classFreePages: ['classgate', 'profile'],
 
-  navigate(page, params) {
-    
+  getBasePath() {
+    const p = window.location.pathname || '';
+    if (p.startsWith('/stdw')) return '/stdw';
+    return '';
+  },
+
+  pageToSlug(page) {
+    if (!page || page === 'dashboard' || page === 'home') return 'home';
+    return page;
+  },
+
+  slugToPage(slug) {
+    if (!slug || slug === 'home' || slug === 'dashboard') return 'dashboard';
+    return slug;
+  },
+
+  pageToPath(page, params) {
+    const base = this.getBasePath();
+    const slug = this.pageToSlug(page);
+    const path = base + '/' + slug;
+    const search = new URLSearchParams();
+
+    // Preserve dynamic backend URL override (?api=...)
+    const currentApi = new URLSearchParams(window.location.search).get('api');
+    if (currentApi) search.set('api', currentApi);
+
+    if (params && typeof params === 'object') {
+      for (const [k, v] of Object.entries(params)) {
+        if (v !== undefined && v !== null && v !== '') {
+          search.set(k, v);
+        }
+      }
+    }
+    const qs = search.toString();
+    return path + (qs ? '?' + qs : '') + (window.location.hash || '');
+  },
+
+  parseCurrentRoute() {
+    const base = this.getBasePath();
+    let pathname = window.location.pathname || '';
+    if (base && pathname.startsWith(base)) {
+      pathname = pathname.slice(base.length);
+    }
+    const clean = pathname.replace(/^\/+|\/+$/g, '');
+    const parts = clean ? clean.split('/') : [];
+    const slug = parts[0] || '';
+    const page = this.slugToPage(slug);
+
+    const searchParams = new URLSearchParams(window.location.search);
+    const params = {};
+    for (const [k, v] of searchParams.entries()) {
+      if (k !== 'api') params[k] = v;
+    }
+    return { page, params, slug };
+  },
+
+  navigate(page, params, replaceHistory) {
+    if (!page) page = 'dashboard';
+    if (page === 'home') page = 'dashboard';
+
     if (state.session && state.session.role === 'teacher' && !state.activeClass
         && this._classFreePages.indexOf(page) === -1) {
       if (page !== 'classgate') ui.toast('เลือกชั้นเรียนก่อนเริ่มทำงาน', 'warning');
       page = 'classgate'; params = null;
     }
 
-    state.page = page; state.params = params || {};
+    state.page = page; 
+    state.params = params || {};
     document.querySelectorAll('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.page === page));
     this.updateNavIndicator();
     
     const fab = document.getElementById('fab-btn');
     const canAdd = state.session && state.session.role !== 'student' && (page === 'check' || page === 'tracking');
-    fab.style.display = canAdd ? 'flex' : 'none';
-    fab.onclick = canAdd ? () => (page === 'check' ? checkPage.newAssignment() : app.navigate('check')) : null;
+    if (fab) {
+      fab.style.display = canAdd ? 'flex' : 'none';
+      fab.onclick = canAdd ? () => (page === 'check' ? checkPage.newAssignment() : app.navigate('check')) : null;
+    }
+
     const el = document.getElementById('page-content');
-    el.classList.remove('page-enter'); void el.offsetWidth; el.classList.add('page-enter');
-    const renderer = pages[page];
-    if (renderer) renderer(state.params); else el.innerHTML = '<div class="empty-state">ไม่พบหน้านี้</div>';
+    if (el) {
+      el.classList.remove('page-enter'); 
+      void el.offsetWidth; 
+      el.classList.add('page-enter');
+      const renderer = pages[page];
+      if (renderer) renderer(state.params); 
+      else el.innerHTML = '<div class="empty-state">ไม่พบหน้านี้</div>';
+    }
+
+    // Update URL in browser address bar (supports deep linking, sharing, and browser back/forward)
+    const targetUrl = this.pageToPath(page, state.params);
+    const currentUrl = (window.location.pathname || '') + (window.location.search || '') + (window.location.hash || '');
+    if (currentUrl !== targetUrl) {
+      try {
+        if (replaceHistory) {
+          window.history.replaceState({ page, params: state.params }, '', targetUrl);
+        } else {
+          window.history.pushState({ page, params: state.params }, '', targetUrl);
+        }
+      } catch (e) {}
+    }
+
     if (window.innerWidth <= 992) {
-      document.getElementById('sidebar').classList.remove('mobile-open');
+      const sb = document.getElementById('sidebar');
+      if (sb) sb.classList.remove('mobile-open');
       app.syncSidebarBackdrop();
     }
   },
@@ -1024,6 +1120,13 @@ const app = {
         e.preventDefault(); document.getElementById('global-search').focus();
       }
       if (e.key === 'Escape') { ui.closeDrawer(); }
+    });
+
+    // Browser back/forward button navigation support (History API popstate)
+    window.addEventListener('popstate', (e) => {
+      if (!state.session) return;
+      const target = (e.state && e.state.page) ? e.state : this.parseCurrentRoute();
+      this.navigate(target.page || 'dashboard', target.params || {}, true);
     });
   }
 };
@@ -3175,7 +3278,7 @@ const scorePage = {
 };
 
 /* ---------------- รายงาน (REPORTS) ---------------- */
-pages.reports = async function () {
+pages.reports = async function (params) {
   await ensureClassesSubjects();
   const el = document.getElementById('page-content');
   el.innerHTML = `
@@ -3207,6 +3310,13 @@ pages.reports = async function () {
 
   document.getElementById('rpt-class').addEventListener('change', () => reportPage.load());
   document.getElementById('rpt-subject').addEventListener('change', () => reportPage.load());
+  if (params && params.tab) {
+    const targetTab = document.querySelector(`.tab-item[data-r="${params.tab}"]`);
+    if (targetTab) {
+      reportPage.switchTab(targetTab);
+      return;
+    }
+  }
   reportPage.load();
 };
 
@@ -3214,11 +3324,16 @@ const reportPage = {
   current: 'notsubmitted',
   data: null,
   switchTab(el) {
+    if (!el) return;
     document.querySelectorAll('.tab-item').forEach(t => t.classList.remove('active'));
     el.classList.add('active');
     this.current = el.dataset.r;
     document.getElementById('rpt-subject-wrap').style.display =
       (this.current === 'behavior' || this.current === 'gpa') ? 'none' : '';
+    if (state.page === 'reports') {
+      const currentUrl = app.pageToPath('reports', { tab: this.current });
+      try { window.history.replaceState({ page: 'reports', params: { tab: this.current } }, '', currentUrl); } catch (e) {}
+    }
     this.load();
   },
   async load() {
@@ -3526,16 +3641,28 @@ pages.studentdetail = async function (params) {
     </div>
     <div id="student-tab-body"></div>`;
 
-  studentProfile.render('info');
+  const initTab = (params && params.tab) || 'info';
+  const targetTab = document.querySelector(`.tab-strip .tab-item[data-t="${initTab}"]`);
+  if (targetTab) {
+    studentProfile.switchTab(targetTab);
+  } else {
+    studentProfile.render('info');
+  }
 };
 
 const studentProfile = {
   data: null, studentId: null,
 
   switchTab(el) {
+    if (!el) return;
     document.querySelectorAll('.tab-strip .tab-item').forEach(t => t.classList.remove('active'));
     el.classList.add('active');
-    this.render(el.dataset.t);
+    const tabKey = el.dataset.t;
+    if (state.page === 'studentdetail' && this.studentId) {
+      const currentUrl = app.pageToPath('studentdetail', { id: this.studentId, tab: tabKey });
+      try { window.history.replaceState({ page: 'studentdetail', params: { id: this.studentId, tab: tabKey } }, '', currentUrl); } catch (e) {}
+    }
+    this.render(tabKey);
   },
 
   render(tab) {
@@ -3933,15 +4060,23 @@ pages.settings = async function (params) {
 const settingsPage = {
   switchTab(el) {
     if (!el) el = document.querySelector('.settings-nav-item');
+    if (!el) return;
     document.querySelectorAll('.settings-nav-item').forEach(t => t.classList.remove('active'));
     el.classList.add('active');
 
     const key = el.dataset.t;
     const meta = SETTINGS_NAV.flatMap(g => g.items).find(i => i.key === key) || {};
-    document.getElementById('settings-head').innerHTML = `
-      <div class="settings-pane-icon"><span class="material-symbols-outlined">${meta.icon || 'tune'}</span></div>
-      <div><div class="settings-pane-title">${ui.escapeHtml(meta.label || '')}</div>
-      <div class="settings-pane-desc">${ui.escapeHtml(meta.desc || '')}</div></div>`;
+    const head = document.getElementById('settings-head');
+    if (head) {
+      head.innerHTML = `
+        <div class="settings-pane-icon"><span class="material-symbols-outlined">${meta.icon || 'tune'}</span></div>
+        <div><div class="settings-pane-title">${ui.escapeHtml(meta.label || '')}</div>
+        <div class="settings-pane-desc">${ui.escapeHtml(meta.desc || '')}</div></div>`;
+    }
+    if (state.page === 'settings') {
+      const currentUrl = app.pageToPath('settings', { tab: key });
+      try { window.history.replaceState({ page: 'settings', params: { tab: key } }, '', currentUrl); } catch (e) {}
+    }
     this.render(key);
   },
 
