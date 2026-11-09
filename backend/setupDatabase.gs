@@ -14,7 +14,7 @@ function setupDatabase() {
     "Classes": ["ClassID", "ClassName", "Level", "Room", "AdvisorID"],
     "Subjects": ["SubjectID", "SubjectCode", "SubjectName", "Credit", "TeacherID", "ClassIDs"],
     "Assignments": ["AssignmentID", "SubjectID", "ClassID", "SeqNo", "Title", "Description", "FullScore", "AssignDate", "DueDate", "Weight", "Type", "RubricID", "AttachLinks"],
-    "AssignmentStatus": ["StatusID", "AssignmentID", "StudentID", "Status", "Score", "Note", "RubricScore", "SubmitDate", "CheckDate"],
+    "AssignmentStatus": ["StatusID", "AssignmentID", "StudentID", "Status", "Score", "Note", "RubricScore", "SubmitDate", "CheckDate", "FileUrl", "FileName", "FileId"],
     "Behaviors": ["BehaviorID", "StudentID", "ClassID", "TypeID", "Points", "Note", "Date", "CreatedBy"],
     "BehaviorTypes": ["TypeID", "TypeName", "Category", "DefaultPoints", "Icon"],
     "ScoreSettings": ["SettingID", "ComponentName", "FullScore", "Order", "Auto"],

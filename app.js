@@ -1914,6 +1914,7 @@ const checkPage = {
           </div>
         </div>
         <div class="d-flex gap-2 flex-wrap">
+          ${data.folderUrl ? `<a href="${data.folderUrl}" target="_blank" class="btn btn-soft btn-sm" style="color:#0284c7;background:rgba(2,132,199,0.1);" title="เปิดโฟลเดอร์งานนี้ใน Google Drive"><span class="material-symbols-outlined" style="font-size:16px;">folder_open</span> โฟลเดอร์งานใน Drive</a>` : ''}
           <button class="btn btn-outline btn-sm" onclick="checkPage.exportCsv()"><span class="material-symbols-outlined" style="font-size:16px;">download</span> Export</button>
           <button class="btn btn-outline btn-sm" onclick="window.print()"><span class="material-symbols-outlined" style="font-size:16px;">print</span> Print</button>
           <button class="btn btn-outline btn-sm" onclick="checkPage.editAssignment()"><span class="material-symbols-outlined" style="font-size:16px;">edit</span> แก้ไขงาน</button>
@@ -1951,7 +1952,23 @@ const checkPage = {
                 <td><input type="checkbox" class="row-check"></td>
                 <td>${r.No}</td>
                 <td><div class="avatar" style="cursor:pointer;" title="ดูโปรไฟล์" onclick="app.navigate('studentdetail',{id:'${r.StudentID}'})">${ui.initials(r.FullName,'')}</div></td>
-                <td style="font-weight:600;">${ui.escapeHtml(r.FullName)}<div><span class="autosave-indicator" id="save-${r.StatusID}"><span class="material-symbols-outlined" style="font-size:13px;">cloud_done</span></span></div></td>
+                <td style="font-weight:600;">
+                  <div class="d-flex align-items-center gap-1">
+                    <span>${ui.escapeHtml(r.FullName)}</span>
+                    <button type="button" class="btn-file-icon" title="อัพโหลดไฟล์ให้นักเรียนคนนี้" onclick="checkPage.uploadForStudent('${r.StudentID}','${ui.escapeHtml(r.FullName)}')">
+                      <span class="material-symbols-outlined" style="font-size:15px;">upload_file</span>
+                    </button>
+                  </div>
+                  ${r.FileUrl ? `
+                    <div class="mt-1">
+                      <a href="${r.FileUrl}" target="_blank" class="badge-file-link" title="${ui.escapeHtml(r.FileName || 'เปิดดูไฟล์งาน')}">
+                        <span class="material-symbols-outlined" style="font-size:13px;vertical-align:-2px;">attachment</span>
+                        ${ui.escapeHtml(r.FileName || 'ดูไฟล์งาน')}
+                      </a>
+                    </div>
+                  ` : ''}
+                  <div><span class="autosave-indicator" id="save-${r.StatusID}"><span class="material-symbols-outlined" style="font-size:13px;">cloud_done</span></span></div>
+                </td>
                 <td>${historyCell(r.StudentID)}</td>
                 <td>
                   <div class="d-flex align-items-center justify-content-center gap-2">
@@ -2228,7 +2245,16 @@ const checkPage = {
       </div>
       <div class="mb-3"><label class="form-label">เกณฑ์ให้คะแนน (Rubric)</label><select class="form-select" id="af-rubric"><option value="">\u2014 ไม่ใช้เกณฑ์ \u2014</option></select>
         <div class="text-muted-app" style="font-size:11.5px;margin-top:4px;">ถ้าเลือก จะมีปุ่มให้คะแนนตามหัวข้อย่อยในตารางเช็คงาน (สร้างเกณฑ์ได้ที่ ตั้งค่า → เกณฑ์ให้คะแนน)</div></div>
-      <div class="mb-3"><label class="form-label">แนบลิงก์ (Google Drive / Docs / YouTube / PDF)</label><input class="form-control" id="af-link" placeholder="https:\/\/..." value="${ui.escapeHtml(link)}"></div>`;
+      <div class="mb-3">
+        <label class="form-label">แนบลิงก์หรือไฟล์ใบงาน (Google Drive / Docs / YouTube / PDF)</label>
+        <div class="d-flex gap-2">
+          <input class="form-control" id="af-link" placeholder="https:\/\/..." value="${ui.escapeHtml(link)}">
+          <button type="button" class="btn btn-outline btn-sm d-flex align-items-center gap-1 text-nowrap" onclick="checkPage.uploadTeacherMaterial()">
+            <span class="material-symbols-outlined" style="font-size:16px;">cloud_upload</span> อัพโหลดไฟล์
+          </button>
+        </div>
+        <div class="text-muted-app" style="font-size:11.5px;margin-top:4px;">กด "อัพโหลดไฟล์" เพื่อเลือกไฟล์จากเครื่องขึ้น Google Drive ของชั้นและวิชานี้อัตโนมัติ</div>
+      </div>`;
     const footer = `<button class="btn btn-outline" onclick="ui.closeDrawer()">ยกเลิก</button><button class="btn btn-primary" onclick="checkPage.saveAssignment('${a.AssignmentID || ''}')">บันทึก</button>`;
     ui.openDrawer(isEdit ? 'แก้ไขงาน' : 'สร้างงานใหม่', body, footer);
     if (isEdit) document.getElementById('af-hasscore').value = a.HasScore ? '1' : '0';
@@ -2238,6 +2264,63 @@ const checkPage = {
       sel.innerHTML = '<option value="">\u2014 ไม่ใช้เกณฑ์ \u2014</option>' +
         list.map(r => `<option value="${r.RubricID}" ${a.RubricID === r.RubricID ? 'selected' : ''}>${ui.escapeHtml(r.Name)} (เต็ม ${r.maxTotal})</option>`).join('');
     }).catch(() => {});
+  },
+
+  uploadForStudent(studentId, studentName) {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx';
+    input.onchange = async () => {
+      const file = input.files && input.files[0];
+      if (!file) return;
+      ui.toast('กำลังอัพโหลดไฟล์เข้า Google Drive...', 'info');
+      try {
+        const processed = await fileHelper.readFile(file);
+        await api('apiUploadFile', state.token, {
+          assignmentId: checkPage.assignmentId,
+          studentId: studentId,
+          fileName: processed.fileName,
+          mimeType: processed.mimeType,
+          base64Data: processed.base64Data,
+          type: 'student_submission'
+        });
+        ui.toast('อัพโหลดไฟล์ให้ ' + studentName + ' สำเร็จ!', 'success');
+        checkPage.openCheckTable(checkPage.assignmentId);
+      } catch (e) {
+        ui.toast(e.message || 'อัพโหลดไม่สำเร็จ', 'error');
+      }
+    };
+    input.click();
+  },
+
+  uploadTeacherMaterial() {
+    const classId = document.getElementById('af-class').value;
+    const subjectId = document.getElementById('af-subject').value;
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx';
+    input.onchange = async () => {
+      const file = input.files && input.files[0];
+      if (!file) return;
+      ui.toast('กำลังอัพโหลดไฟล์เข้า Google Drive...', 'info');
+      try {
+        const processed = await fileHelper.readFile(file);
+        const res = await api('apiUploadFile', state.token, {
+          classId: classId,
+          subjectId: subjectId,
+          assignmentId: checkPage.assignment && checkPage.assignment.AssignmentID,
+          fileName: processed.fileName,
+          mimeType: processed.mimeType,
+          base64Data: processed.base64Data,
+          type: 'teacher_material'
+        });
+        document.getElementById('af-link').value = res.fileUrl;
+        ui.toast('อัพโหลดขึ้น Google Drive เรียบร้อย!', 'success');
+      } catch (e) {
+        ui.toast(e.message || 'อัพโหลดไม่สำเร็จ', 'error');
+      }
+    };
+    input.click();
   },
 
   async saveAssignment(assignmentId) {
@@ -2795,20 +2878,311 @@ const trackPage = {
     ui.downloadCsv(csv, 'tracking_matrix.csv');
   }
 };
+/* =========================================================================
+   FILE HELPER & STUDENT WORK SUBMISSION
+   ========================================================================= */
+
+const fileHelper = {
+  async readFile(file) {
+    if (!file) throw new Error('ไม่พบไฟล์');
+    const maxSize = 15 * 1024 * 1024; // 15MB
+    if (file.size > maxSize) throw new Error('ไฟล์มีขนาดใหญ่เกินกำหนด (ไม่เกิน 15 MB)');
+
+    if (file.type && file.type.startsWith('image/') && file.size > 2 * 1024 * 1024) {
+      try {
+        const compressed = await this.compressImage(file);
+        return compressed;
+      } catch (e) {}
+    }
+
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        resolve({
+          fileName: file.name,
+          mimeType: file.type || 'application/octet-stream',
+          base64Data: reader.result,
+          size: file.size
+        });
+      };
+      reader.onerror = () => reject(new Error('ไม่สามารถอ่านไฟล์ได้'));
+      reader.readAsDataURL(file);
+    });
+  },
+
+  compressImage(file) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const reader = new FileReader();
+      reader.onload = (e) => { img.src = e.target.result; };
+      reader.onerror = reject;
+      img.onload = () => {
+        const maxDim = 1920;
+        let w = img.width;
+        let h = img.height;
+        if (w > maxDim || h > maxDim) {
+          if (w > h) {
+            h = Math.round((h * maxDim) / w);
+            w = maxDim;
+          } else {
+            w = Math.round((w * maxDim) / h);
+            h = maxDim;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, w, h);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+        resolve({
+          fileName: file.name.replace(/\.[^/.]+$/, '') + '.jpg',
+          mimeType: 'image/jpeg',
+          base64Data: dataUrl,
+          size: Math.round(dataUrl.length * 0.75)
+        });
+      };
+      img.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+};
+
+const studentWork = {
+  cachedAssignments: [],
+  selectedFile: null,
+
+  openSubmitModal(assignmentId) {
+    const a = (this.cachedAssignments || []).find(x => x.AssignmentID === assignmentId);
+    if (!a) {
+      ui.toast('ไม่พบข้อมูลงาน', 'error');
+      return;
+    }
+
+    this.selectedFile = null;
+    let attachLink = '';
+    try {
+      const links = JSON.parse(a.AttachLinks || '[]');
+      if (Array.isArray(links) && links[0]) attachLink = links[0];
+    } catch (e) {
+      if (typeof a.AttachLinks === 'string' && a.AttachLinks.startsWith('http')) attachLink = a.AttachLinks;
+    }
+
+    const m = ui.statusMeta(a.MyStatus || 'not_submitted');
+
+    const body = `
+      <div class="mb-3 p-3 rounded" style="background:var(--bg-surface);border:1px solid var(--border);">
+        <div style="font-weight:800;font-size:16px;">${ui.assignmentLabel(a)}</div>
+        <div class="d-flex align-items-center gap-2 mt-2 flex-wrap">
+          <span class="status-chip ${m.cls}"><span class="material-symbols-outlined">${m.icon}</span>${m.label}</span>
+          <span style="font-size:12.5px;color:var(--text-muted);">
+            <span class="material-symbols-outlined" style="font-size:14px;vertical-align:-2px;">calendar_today</span> กำหนดส่ง: ${ui.fmtDate(a.DueDate)}
+          </span>
+          ${a.FullScore ? `<span class="badge" style="background:rgba(79,70,229,0.1);color:var(--primary);font-weight:700;">คะแนนเต็ม: ${a.FullScore}</span>` : ''}
+        </div>
+        ${a.Description ? `<div class="mt-2 text-muted-app" style="font-size:13px;line-height:1.6;">${ui.escapeHtml(a.Description)}</div>` : ''}
+        ${attachLink ? `
+          <div class="mt-2 pt-2" style="border-top:1px dashed var(--border);">
+            <a href="${attachLink}" target="_blank" class="btn btn-soft btn-sm">
+              <span class="material-symbols-outlined" style="font-size:15px;">open_in_new</span> เปิดลิงก์/ใบงานจากครู
+            </a>
+          </div>
+        ` : ''}
+      </div>
+
+      ${a.MyFileUrl ? `
+        <div class="mb-3 p-3 rounded" style="background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.25);">
+          <div style="font-weight:700;font-size:13px;color:#047857;margin-bottom:4px;">
+            <span class="material-symbols-outlined" style="font-size:16px;vertical-align:-3px;">task_alt</span> ไฟล์ที่คุณส่งไว้ในระบบ:
+          </div>
+          <div class="d-flex align-items-center justify-content-between gap-2 flex-wrap">
+            <a href="${a.MyFileUrl}" target="_blank" class="badge-file-link" style="max-width:100%;font-size:13px;">
+              <span class="material-symbols-outlined" style="font-size:15px;">description</span> ${ui.escapeHtml(a.MyFileName || 'ดูไฟล์งาน')}
+            </a>
+            ${a.MySubmitDate ? `<span style="font-size:11.5px;color:var(--text-muted);">ส่งเมื่อ ${ui.fmtDateTime(a.MySubmitDate)}</span>` : ''}
+          </div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:6px;">ต้องการส่งไฟล์ใหม่? เลือกไฟล์ใหม่ด้านล่างแล้วกดยืนยัน</div>
+        </div>
+      ` : ''}
+
+      <div class="mb-3">
+        <label class="form-label" style="font-weight:700;">เลือกไฟล์งานที่ต้องการส่ง *</label>
+        <div class="drop-zone" id="work-drop-zone" onclick="document.getElementById('work-file-input').click()">
+          <span class="material-symbols-outlined" style="font-size:42px;color:var(--primary);">cloud_upload</span>
+          <div style="font-weight:700;margin-top:6px;font-size:14px;">แตะที่นี่เพื่อเลือกไฟล์จากเครื่อง หรือถ่ายรูป</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">รองรับรูปภาพ (JPG, PNG), PDF, เอกสาร Word (สูงสุด 15MB)</div>
+          <input type="file" id="work-file-input" style="display:none;" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx" onchange="studentWork.onFileSelected(this)">
+        </div>
+        <div id="work-file-preview" class="mt-2" style="display:none;"></div>
+      </div>
+
+      <div id="work-upload-progress" class="mb-3" style="display:none;">
+        <div class="d-flex align-items-center gap-2 p-3 rounded" style="background:rgba(79,70,229,0.06);border:1px solid rgba(79,70,229,0.2);">
+          <div class="spinner-ring" style="width:20px;height:20px;border-width:2px;"></div>
+          <div style="font-size:13px;font-weight:600;color:var(--primary);" id="work-upload-status">กำลังอัพโหลดไฟล์เข้า Google Drive...</div>
+        </div>
+      </div>
+    `;
+
+    const footer = `
+      <button type="button" class="btn btn-outline" onclick="ui.closeDrawer()">ยกเลิก</button>
+      <button type="button" class="btn btn-primary" id="btn-submit-work" onclick="studentWork.submitWork('${assignmentId}')" disabled>
+        <span class="material-symbols-outlined" style="font-size:16px;">send</span> ส่งงาน
+      </button>
+    `;
+
+    ui.openDrawer('แนบไฟล์ส่งงาน', body, footer);
+  },
+
+  async onFileSelected(input) {
+    const file = input.files && input.files[0];
+    if (!file) return;
+
+    try {
+      const prevEl = document.getElementById('work-file-preview');
+      prevEl.style.display = 'block';
+      prevEl.innerHTML = '<div style="font-size:12.5px;color:var(--text-muted);"><span class="material-symbols-outlined" style="font-size:14px;vertical-align:-2px;">hourglass_top</span> กำลังประมวลผลไฟล์...</div>';
+
+      const processed = await fileHelper.readFile(file);
+      this.selectedFile = processed;
+
+      const sizeKb = Math.round(processed.size / 1024);
+      const isImg = processed.mimeType.startsWith('image/');
+      prevEl.innerHTML = `
+        <div class="d-flex align-items-center gap-2 p-2 rounded" style="background:rgba(37,99,235,0.06);border:1px solid rgba(37,99,235,0.2);">
+          <span class="material-symbols-outlined" style="font-size:24px;color:#2563eb;">${isImg ? 'image' : 'description'}</span>
+          <div style="flex:1;overflow:hidden;">
+            <div style="font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${ui.escapeHtml(processed.fileName)}</div>
+            <div style="font-size:11.5px;color:var(--text-muted);">${sizeKb < 1024 ? sizeKb + ' KB' : (sizeKb / 1024).toFixed(2) + ' MB'}</div>
+          </div>
+          <button type="button" class="btn-file-icon" onclick="studentWork.clearFile()" title="ลบไฟล์ออก"><span class="material-symbols-outlined" style="font-size:18px;color:var(--danger);">delete</span></button>
+        </div>
+      `;
+      document.getElementById('btn-submit-work').disabled = false;
+    } catch (err) {
+      ui.toast(err.message || 'อ่านไฟล์ไม่สำเร็จ', 'error');
+      this.clearFile();
+    }
+  },
+
+  clearFile() {
+    this.selectedFile = null;
+    const input = document.getElementById('work-file-input');
+    if (input) input.value = '';
+    const prevEl = document.getElementById('work-file-preview');
+    if (prevEl) {
+      prevEl.style.display = 'none';
+      prevEl.innerHTML = '';
+    }
+    const btn = document.getElementById('btn-submit-work');
+    if (btn) btn.disabled = true;
+  },
+
+  async submitWork(assignmentId) {
+    if (!this.selectedFile) {
+      ui.toast('กรุณาเลือกไฟล์ก่อนส่งงาน', 'warning');
+      return;
+    }
+
+    const btn = document.getElementById('btn-submit-work');
+    const progress = document.getElementById('work-upload-progress');
+    const statusText = document.getElementById('work-upload-status');
+    btn.disabled = true;
+    progress.style.display = 'block';
+
+    try {
+      statusText.innerText = 'กำลังเชื่อมต่อและบันทึกไฟล์ลง Google Drive...';
+      await api('apiUploadFile', state.token, {
+        assignmentId: assignmentId,
+        fileName: this.selectedFile.fileName,
+        mimeType: this.selectedFile.mimeType,
+        base64Data: this.selectedFile.base64Data,
+        type: 'student_submission'
+      });
+
+      ui.toast('ส่งงานเรียบร้อยแล้ว!', 'success');
+      ui.closeDrawer();
+      pages.myassignments();
+    } catch (e) {
+      ui.toast(e.message || 'เกิดข้อผิดพลาดในการส่งงาน', 'error');
+      btn.disabled = false;
+      progress.style.display = 'none';
+    }
+  }
+};
+
 /* ---------------- MY ASSIGNMENTS (student) ---------------- */
 pages.myassignments = async function () {
   const el = document.getElementById('page-content');
-  el.innerHTML = `<div class="page-head"><div><h3>งานของฉัน</h3><div class="page-sub">งานทั้งหมดที่ได้รับมอบหมายและสถานะการส่ง</div></div></div><div id="my-assign-list" class="row g-3 mt-1">${Array.from({length:3}).map(()=>`<div class="col-md-4"><div class="card"><div class="skeleton" style="height:90px;"></div></div></div>`).join('')}</div>`;
+  el.innerHTML = `
+    <div class="page-head fade-slide-up">
+      <div>
+        <h3>งานของฉัน</h3>
+        <div class="page-sub">งานทั้งหมดที่ได้รับมอบหมายและสถานะการส่ง · สามารถแนบไฟล์ส่งงานได้ทันที</div>
+      </div>
+    </div>
+    <div id="my-assign-list" class="row g-3 mt-1">
+      ${Array.from({length:3}).map(()=>`<div class="col-md-4"><div class="card"><div class="skeleton" style="height:120px;"></div></div></div>`).join('')}
+    </div>`;
+
   const list = await apiQuiet('apiListAssignments', state.token, null, null).catch(() => []);
-  document.getElementById('my-assign-list').innerHTML = list.length ? list.map(a => {
-    const m = ui.statusMeta(a.MyStatus);
-    return `<div class="col-md-4"><div class="card hoverable fade-slide-up">
-      <div style="font-weight:700;">${ui.assignmentLabel(a)}</div>
-      <div style="font-size:12.5px;color:var(--text-muted);margin:6px 0 10px;">กำหนดส่ง ${ui.fmtDate(a.DueDate)}</div>
-      <span class="status-chip ${m.cls}"><span class="material-symbols-outlined">${m.icon}</span>${m.label}</span>
-      ${a.MyScore !== '' && a.MyScore !== undefined ? `<div style="margin-top:10px;font-weight:700;">คะแนน: ${a.MyScore}/${a.FullScore}</div>` : ''}
-    </div></div>`;
-  }).join('') : '<div class="col-12"><div class="empty-state"><span class="material-symbols-outlined">assignment_turned_in</span><div>ยังไม่มีงานที่มอบหมาย</div></div></div>';
+  studentWork.cachedAssignments = list;
+
+  const host = document.getElementById('my-assign-list');
+  if (!list.length) {
+    host.innerHTML = '<div class="col-12"><div class="empty-state"><span class="material-symbols-outlined">assignment_turned_in</span><div>ยังไม่มีงานที่มอบหมายในขณะนี้</div></div></div>';
+    return;
+  }
+
+  host.innerHTML = list.map(a => {
+    const m = ui.statusMeta(a.MyStatus || 'not_submitted');
+    let attachLink = '';
+    try {
+      const links = JSON.parse(a.AttachLinks || '[]');
+      if (Array.isArray(links) && links[0]) attachLink = links[0];
+    } catch (e) {
+      if (typeof a.AttachLinks === 'string' && a.AttachLinks.startsWith('http')) attachLink = a.AttachLinks;
+    }
+
+    return `
+      <div class="col-md-6 col-lg-4">
+        <div class="card hoverable fade-slide-up" style="display:flex;flex-direction:column;height:100%;padding:20px;">
+          <div style="flex:1;">
+            <div style="font-weight:700;font-size:15px;line-height:1.4;">${ui.assignmentLabel(a)}</div>
+            <div style="font-size:12px;color:var(--text-muted);margin:6px 0 10px;">
+              <span class="material-symbols-outlined" style="font-size:14px;vertical-align:-2px;">calendar_today</span> กำหนดส่ง: ${ui.fmtDate(a.DueDate)}
+            </div>
+            <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+              <span class="status-chip ${m.cls}"><span class="material-symbols-outlined">${m.icon}</span>${m.label}</span>
+              ${a.MyScore !== '' && a.MyScore !== undefined ? `<span class="badge" style="background:rgba(16,185,129,0.1);color:#047857;font-weight:700;font-size:12px;">คะแนน: ${a.MyScore}/${a.FullScore}</span>` : ''}
+            </div>
+            ${a.Description ? `<div style="font-size:12.5px;color:var(--text-muted);margin-bottom:10px;line-height:1.5;">${ui.escapeHtml(a.Description)}</div>` : ''}
+            ${a.MyFileUrl ? `
+              <div class="mb-2 p-2 rounded" style="background:rgba(37,99,235,0.06);border:1px dashed rgba(37,99,235,0.25);">
+                <div style="font-size:11px;color:var(--text-muted);margin-bottom:2px;">ไฟล์ที่ส่งแล้ว:</div>
+                <a href="${a.MyFileUrl}" target="_blank" class="d-inline-flex align-items-center gap-1" style="font-weight:600;font-size:12.5px;color:#2563eb;text-decoration:none;word-break:break-all;">
+                  <span class="material-symbols-outlined" style="font-size:15px;">description</span>
+                  ${ui.escapeHtml(a.MyFileName || 'ดูไฟล์งานที่ส่ง')}
+                </a>
+              </div>
+            ` : ''}
+            ${attachLink ? `
+              <div class="mb-2">
+                <a href="${attachLink}" target="_blank" class="btn btn-soft btn-xs">
+                  <span class="material-symbols-outlined" style="font-size:13px;">open_in_new</span> เอกสาร/ลิงก์จากครู
+                </a>
+              </div>
+            ` : ''}
+          </div>
+          <div class="mt-3 pt-2" style="border-top:1px solid var(--border);">
+            <button class="btn ${a.MyFileUrl ? 'btn-soft' : 'btn-primary'} btn-sm w-100 justify-content-center" onclick="studentWork.openSubmitModal('${a.AssignmentID}')">
+              <span class="material-symbols-outlined" style="font-size:16px;">${a.MyFileUrl ? 'refresh' : 'upload_file'}</span>
+              ${a.MyFileUrl ? 'ส่งไฟล์ใหม่ / แก้ไข' : 'แนบไฟล์ส่งงาน'}
+            </button>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
 };
 
 /* ---------------- คะแนน (SCORE) ---------------- */
@@ -3688,12 +4062,17 @@ const studentProfile = {
     const rows = this.data.assignmentHistory;
     document.getElementById('student-tab-body').innerHTML = `
       <div class="table-card page-enter"><table class="app-table" style="width:100%;">
-        <thead><tr><th>งาน</th><th>กำหนดส่ง</th><th>สถานะ</th><th>คะแนน</th><th>หมายเหตุ</th></tr></thead>
+        <thead><tr><th>งาน</th><th>กำหนดส่ง</th><th>สถานะ</th><th>คะแนน</th><th>ไฟล์แนบ</th><th>หมายเหตุ</th></tr></thead>
         <tbody>${rows.length ? rows.map(a => { const m = ui.statusMeta(a.Status); return `
-          <tr><td style="font-weight:600;">${a.Title ? ui.assignmentLabel(a) : '-'}</td><td>${ui.fmtDate(a.DueDate)}</td>
-          <td><span class="status-chip ${m.cls}"><span class="material-symbols-outlined">${m.icon}</span>${m.label}</span></td>
-          <td>${a.Score !== '' && a.Score !== undefined ? a.Score : '-'}</td><td>${ui.escapeHtml(a.Note || '-')}</td></tr>`; }).join('')
-        : '<tr><td colspan="5" class="text-center py-4 text-muted-app">ยังไม่มีงาน</td></tr>'}</tbody>
+          <tr>
+            <td style="font-weight:600;">${a.Title ? ui.assignmentLabel(a) : '-'}</td>
+            <td>${ui.fmtDate(a.DueDate)}</td>
+            <td><span class="status-chip ${m.cls}"><span class="material-symbols-outlined">${m.icon}</span>${m.label}</span></td>
+            <td>${a.Score !== '' && a.Score !== undefined ? a.Score : '-'}</td>
+            <td>${a.FileUrl ? `<a href="${a.FileUrl}" target="_blank" class="badge-file-link" title="${ui.escapeHtml(a.FileName || 'เปิดไฟล์')}"><span class="material-symbols-outlined" style="font-size:13px;vertical-align:-2px;">attachment</span> ${ui.escapeHtml(a.FileName || 'ดูไฟล์')}</a>` : '-'}</td>
+            <td>${ui.escapeHtml(a.Note || '-')}</td>
+          </tr>`; }).join('')
+        : '<tr><td colspan="6" class="text-center py-4 text-muted-app">ยังไม่มีงาน</td></tr>'}</tbody>
       </table></div>`;
   },
 

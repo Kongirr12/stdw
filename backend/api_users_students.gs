@@ -272,7 +272,10 @@ function apiGetStudentDetail(token, studentId) {
       DueDate: a.DueDate || "",
       Status: st.Status || "not_submitted",
       Score: st.Score !== undefined && st.Score !== "" ? st.Score : "-",
-      Note: st.Note || ""
+      Note: st.Note || "",
+      FileUrl: st.FileUrl || "",
+      FileName: st.FileName || "",
+      FileId: st.FileId || ""
     };
   });
   

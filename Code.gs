@@ -1208,7 +1208,10 @@ function apiGetStudentDetail(token, studentId) {
       DueDate: a.DueDate || "",
       Status: st.Status || "not_submitted",
       Score: st.Score !== undefined && st.Score !== "" ? st.Score : "-",
-      Note: st.Note || ""
+      Note: st.Note || "",
+      FileUrl: st.FileUrl || "",
+      FileName: st.FileName || "",
+      FileId: st.FileId || ""
     };
   });
   
@@ -1324,9 +1327,60 @@ function apiGetClassAcademics(token, classId) {
  * api_assignments_check.gs
  * จัดการงาน การเช็คงาน ตรวจการส่งงาน และเมทริกซ์ติดตามงาน
  * เพิ่มประสิทธิภาพการตรวจงานแบบ Batch Update 1 ครั้ง แทนการวนลูป
+ * รองรับการอัพโหลดไฟล์งานเข้า Google Drive แยกโฟลเดอร์ตาม ชั้นเรียน -> วิชาเรียน -> ชื่องาน
  */
 
+function ensureAssignmentStatusColumns_() {
+  try {
+    var sheet = getSheet("AssignmentStatus");
+    var lastCol = sheet.getLastColumn() || 1;
+    var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
+    var needed = ["FileUrl", "FileName", "FileId"];
+    for (var i = 0; i < needed.length; i++) {
+      if (headers.indexOf(needed[i]) === -1) {
+        lastCol++;
+        sheet.getRange(1, lastCol).setValue(needed[i]).setFontWeight("bold").setBackground("#F3F4F6");
+      }
+    }
+  } catch (e) {
+    Logger.log("[ensureAssignmentStatusColumns_] " + e.message);
+  }
+}
+
+function getOrCreateFolder_(parentFolder, folderName) {
+  var cleanName = String(folderName || "ทั่วไป").trim();
+  var folders = parentFolder.getFoldersByName(cleanName);
+  if (folders.hasNext()) {
+    return folders.next();
+  }
+  return parentFolder.createFolder(cleanName);
+}
+
+function getRootDriveFolder_() {
+  var ss = getSS();
+  var ssFile = DriveApp.getFileById(ss.getId());
+  var parents = ssFile.getParents();
+  var parentFolder = parents.hasNext() ? parents.next() : DriveApp.getRootFolder();
+  var rootName = "ระบบเช็คงานนักเรียน_ไฟล์งาน";
+  return getOrCreateFolder_(parentFolder, rootName);
+}
+
 function apiListAssignments(token, classId, subjectId) {
+  var session = null;
+  if (token) {
+    try { session = apiValidateSession(token); } catch (e) {}
+  }
+  
+  var isStudent = session && session.role === "student";
+  var studentId = isStudent ? (session.refId || session.userId) : null;
+  
+  if (isStudent && !classId && studentId) {
+    var student = getRowById("Students", "StudentID", studentId);
+    if (student && student.ClassID) {
+      classId = student.ClassID;
+    }
+  }
+
   var assignments = getRows("Assignments");
   if (classId) {
     assignments = assignments.filter(function(a) { return String(a.ClassID) === String(classId); });
@@ -1338,7 +1392,50 @@ function apiListAssignments(token, classId, subjectId) {
   assignments.sort(function(a, b) {
     return (Number(a.SeqNo) || 0) - (Number(b.SeqNo) || 0);
   });
-  return assignments;
+  
+  if (isStudent && studentId) {
+    var statusRows = getRows("AssignmentStatus").filter(function(r) {
+      return String(r.StudentID) === String(studentId);
+    });
+    var statusMap = {};
+    for (var i = 0; i < statusRows.length; i++) {
+      statusMap[String(statusRows[i].AssignmentID)] = statusRows[i];
+    }
+    
+    return assignments.map(function(a) {
+      var st = statusMap[String(a.AssignmentID)] || {};
+      var copy = Object.assign({}, a);
+      copy.MyStatus = st.Status || "not_submitted";
+      copy.MyScore = st.Score !== undefined ? st.Score : "";
+      copy.MyNote = st.Note || "";
+      copy.MyFileUrl = st.FileUrl || "";
+      copy.MyFileName = st.FileName || "";
+      copy.MyFileId = st.FileId || "";
+      copy.MySubmitDate = st.SubmitDate || "";
+      return copy;
+    });
+  }
+  
+  var allStatuses = getRows("AssignmentStatus");
+  var assignStatusMap = {};
+  for (var j = 0; j < allStatuses.length; j++) {
+    var sRow = allStatuses[j];
+    var aId = String(sRow.AssignmentID);
+    if (!assignStatusMap[aId]) assignStatusMap[aId] = { total: 0, submitted: 0, late: 0, not_submitted: 0 };
+    assignStatusMap[aId].total++;
+    var stCode = sRow.Status || "not_submitted";
+    if (stCode === "submitted" || stCode === "resubmitted") assignStatusMap[aId].submitted++;
+    else if (stCode === "late") assignStatusMap[aId].late++;
+    else assignStatusMap[aId].not_submitted++;
+  }
+  
+  return assignments.map(function(a) {
+    var summary = assignStatusMap[String(a.AssignmentID)] || { total: 0, submitted: 0, late: 0, not_submitted: 0 };
+    var copy = Object.assign({}, a);
+    copy.NotSubmitted = summary.not_submitted;
+    copy.SubmittedCount = summary.submitted + summary.late;
+    return copy;
+  });
 }
 
 function provisionStatusRows(assignmentId, classId) {
@@ -1367,13 +1464,16 @@ function provisionStatusRows(assignmentId, classId) {
         Note: "",
         RubricScore: "",
         SubmitDate: "",
-        CheckDate: ""
+        CheckDate: "",
+        FileUrl: "",
+        FileName: "",
+        FileId: ""
       });
     }
   }
   
   if (toInsert.length > 0) {
-    insertRows("AssignmentStatus", toInsert, ["StatusID", "AssignmentID", "StudentID", "Status", "Score", "Note", "RubricScore", "SubmitDate", "CheckDate"]);
+    insertRows("AssignmentStatus", toInsert, ["StatusID", "AssignmentID", "StudentID", "Status", "Score", "Note", "RubricScore", "SubmitDate", "CheckDate", "FileUrl", "FileName", "FileId"]);
   }
 }
 
@@ -1450,7 +1550,7 @@ function apiGetCheckTable(token, assignmentId) {
   var a = getRowById("Assignments", "AssignmentID", assignmentId);
   if (!a) throw new Error("ไม่พบงานที่เลือก");
   
-  // เผื่อมีนักเรียนใหม่ ให้ auto-provision ไว้เสมอ
+  ensureAssignmentStatusColumns_();
   provisionStatusRows(assignmentId, a.ClassID);
   
   var students = apiListStudents(token, a.ClassID);
@@ -1475,13 +1575,34 @@ function apiGetCheckTable(token, assignmentId) {
       Note: st.Note || "",
       RubricScore: st.RubricScore || "",
       SubmitDate: st.SubmitDate || "",
-      CheckDate: st.CheckDate || ""
+      CheckDate: st.CheckDate || "",
+      FileUrl: st.FileUrl || "",
+      FileName: st.FileName || "",
+      FileId: st.FileId || ""
     };
   });
   
+  var folderUrl = "";
+  try {
+    var rootFolder = getRootDriveFolder_();
+    var c = getRowById("Classes", "ClassID", a.ClassID);
+    var className = (c && c.ClassName) ? c.ClassName : a.ClassID;
+    var classFolder = getOrCreateFolder_(rootFolder, "ชั้น " + className);
+    
+    var s = getRowById("Subjects", "SubjectID", a.SubjectID);
+    var subjectName = (s && s.SubjectName) ? s.SubjectName : a.SubjectID;
+    var subjectFolder = getOrCreateFolder_(classFolder, subjectName);
+    
+    var assignFolder = getOrCreateFolder_(subjectFolder, a.Title || "งาน");
+    folderUrl = assignFolder.getUrl();
+  } catch (driveErr) {
+    Logger.log("[apiGetCheckTable] Drive folder lookup notice: " + driveErr.message);
+  }
+  
   return {
     assignment: a,
-    rows: rows
+    rows: rows,
+    folderUrl: folderUrl
   };
 }
 
@@ -1591,6 +1712,200 @@ function apiGetSubjectMatrix(token, classId, subjectId) {
     assignments: assignments,
     students: students,
     matrix: matrix
+  };
+}
+
+/**
+ * ดึงลิงก์โฟลเดอร์ Google Drive ตามชั้นเรียนและวิชา
+ */
+function apiGetDriveFolderUrl(token, classId, subjectId, assignmentId) {
+  var session = apiValidateSession(token);
+  var rootFolder = getRootDriveFolder_();
+  var targetFolder = rootFolder;
+  
+  if (classId) {
+    var c = getRowById("Classes", "ClassID", classId);
+    var className = (c && c.ClassName) ? c.ClassName : classId;
+    targetFolder = getOrCreateFolder_(rootFolder, "ชั้น " + className);
+    
+    if (subjectId) {
+      var s = getRowById("Subjects", "SubjectID", subjectId);
+      var subjectName = (s && s.SubjectName) ? s.SubjectName : subjectId;
+      targetFolder = getOrCreateFolder_(targetFolder, subjectName);
+      
+      if (assignmentId) {
+        var a = getRowById("Assignments", "AssignmentID", assignmentId);
+        if (a && a.Title) {
+          targetFolder = getOrCreateFolder_(targetFolder, a.Title);
+        }
+      }
+    }
+  }
+  
+  return {
+    success: true,
+    folderUrl: targetFolder.getUrl(),
+    folderName: targetFolder.getName()
+  };
+}
+
+/**
+ * อัพโหลดไฟล์งานเข้า Google Drive
+ * แยกโฟลเดอร์ตาม ชั้นเรียน -> วิชาเรียน -> ชื่องาน
+ */
+function apiUploadFile(token, payload) {
+  var session = apiValidateSession(token);
+  if (!payload || !payload.base64Data) {
+    throw new Error("ไม่พบข้อมูลไฟล์สำหรับอัพโหลด");
+  }
+
+  var classId = payload.classId;
+  var subjectId = payload.subjectId;
+  var assignmentId = payload.assignmentId;
+  var studentId = payload.studentId;
+  if (session.role === "student") {
+    studentId = session.refId || session.userId;
+  }
+  
+  var originalFileName = String(payload.fileName || "work_file").trim();
+  var mimeType = payload.mimeType || "application/octet-stream";
+  var base64Data = payload.base64Data;
+  
+  if (base64Data.indexOf(",") !== -1) {
+    var parts = base64Data.split(",");
+    var m = parts[0].match(/data:([^;]+);base64/);
+    if (m) mimeType = m[1];
+    base64Data = parts[1];
+  }
+  
+  var bytes = Utilities.base64Decode(base64Data);
+  if (bytes.length > 15 * 1024 * 1024) {
+    throw new Error("ไฟล์มีขนาดใหญ่เกินกำหนด (ไม่เกิน 15 MB)");
+  }
+  
+  var assignmentObj = null;
+  if (assignmentId) {
+    assignmentObj = getRowById("Assignments", "AssignmentID", assignmentId);
+    if (assignmentObj) {
+      if (!classId) classId = assignmentObj.ClassID;
+      if (!subjectId) subjectId = assignmentObj.SubjectID;
+    }
+  }
+  
+  var studentObj = null;
+  if (studentId) {
+    studentObj = getRowById("Students", "StudentID", studentId);
+    if (studentObj && !classId) {
+      classId = studentObj.ClassID;
+    }
+  }
+  
+  // 1. Root folder ใน Drive
+  var rootFolder = getRootDriveFolder_();
+  
+  // 2. Class folder: "ชั้น ม.1/1"
+  var className = "ทั่วไป";
+  if (classId) {
+    var c = getRowById("Classes", "ClassID", classId);
+    if (c && c.ClassName) className = c.ClassName;
+    else className = classId;
+  }
+  var classFolder = getOrCreateFolder_(rootFolder, "ชั้น " + className);
+  
+  // 3. Subject folder: "วิทยาศาสตร์ 1"
+  var subjectName = "ทั่วไป";
+  if (subjectId) {
+    var s = getRowById("Subjects", "SubjectID", subjectId);
+    if (s && s.SubjectName) subjectName = s.SubjectName;
+    else subjectName = subjectId;
+  }
+  var subjectFolder = getOrCreateFolder_(classFolder, subjectName);
+  
+  // 4. Assignment folder (ถ้ามีชื่องาน)
+  var targetFolder = subjectFolder;
+  if (assignmentObj && assignmentObj.Title) {
+    targetFolder = getOrCreateFolder_(subjectFolder, assignmentObj.Title.trim());
+  }
+  
+  var ext = "";
+  var lastDot = originalFileName.lastIndexOf(".");
+  if (lastDot !== -1) {
+    ext = originalFileName.substring(lastDot);
+  }
+  
+  var finalFileName = originalFileName;
+  if (studentObj) {
+    var stuNo = studentObj.No ? String(studentObj.No).padStart(2, "0") : "";
+    var stuName = studentObj.FullName || (studentObj.FirstName + " " + studentObj.LastName);
+    var cleanOriginal = originalFileName.substring(0, lastDot !== -1 ? lastDot : originalFileName.length);
+    finalFileName = (stuNo ? (stuNo + "_") : "") + stuName + "_" + (cleanOriginal || "งาน") + ext;
+  }
+  
+  var blob = Utilities.newBlob(bytes, mimeType, finalFileName);
+  var file = targetFolder.createFile(blob);
+  
+  try {
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  } catch (shareErr) {
+    Logger.log("[apiUploadFile] setSharing notice: " + shareErr.message);
+  }
+  
+  var fileId = file.getId();
+  var fileUrl = "https://drive.google.com/file/d/" + fileId + "/view";
+  var downloadUrl = "https://drive.google.com/uc?export=download&id=" + fileId;
+  
+  var updatedStatus = null;
+  if (assignmentId && studentId) {
+    ensureAssignmentStatusColumns_();
+    var statusId = "ST_" + assignmentId + "_" + studentId;
+    var currentSt = getRowById("AssignmentStatus", "StatusID", statusId);
+    
+    var newStatus = "submitted";
+    if (assignmentObj && assignmentObj.DueDate) {
+      var due = new Date(assignmentObj.DueDate);
+      if (!isNaN(due.getTime())) {
+        due.setHours(23, 59, 59, 999);
+        if (new Date() > due) {
+          newStatus = "late";
+        }
+      }
+    }
+    if (currentSt && (currentSt.Status === "submitted" || currentSt.Status === "late" || currentSt.Status === "resubmitted")) {
+      newStatus = "resubmitted";
+    }
+    
+    var nowIso = new Date().toISOString();
+    var patch = {
+      StatusID: statusId,
+      AssignmentID: assignmentId,
+      StudentID: studentId,
+      Status: newStatus,
+      SubmitDate: nowIso,
+      FileUrl: fileUrl,
+      FileName: finalFileName,
+      FileId: fileId
+    };
+    
+    var ok = updateRow("AssignmentStatus", "StatusID", statusId, patch);
+    if (!ok) {
+      insertRow("AssignmentStatus", patch, [
+        "StatusID", "AssignmentID", "StudentID", "Status", "Score", "Note", "RubricScore", "SubmitDate", "CheckDate", "FileUrl", "FileName", "FileId"
+      ]);
+    }
+    updatedStatus = newStatus;
+    writeLog("SUBMIT_WORK", "นักเรียนส่งงานผ่านไฟล์: " + finalFileName, studentId);
+  } else {
+    writeLog("UPLOAD_FILE", "อัพโหลดไฟล์เข้า Drive: " + finalFileName, session.userId);
+  }
+  
+  return {
+    success: true,
+    fileId: fileId,
+    fileName: finalFileName,
+    fileUrl: fileUrl,
+    downloadUrl: downloadUrl,
+    folderUrl: targetFolder.getUrl(),
+    status: updatedStatus
   };
 }
 
@@ -2522,7 +2837,7 @@ function setupDatabase() {
     "Classes": ["ClassID", "ClassName", "Level", "Room", "AdvisorID"],
     "Subjects": ["SubjectID", "SubjectCode", "SubjectName", "Credit", "TeacherID", "ClassIDs"],
     "Assignments": ["AssignmentID", "SubjectID", "ClassID", "SeqNo", "Title", "Description", "FullScore", "AssignDate", "DueDate", "Weight", "Type", "RubricID", "AttachLinks"],
-    "AssignmentStatus": ["StatusID", "AssignmentID", "StudentID", "Status", "Score", "Note", "RubricScore", "SubmitDate", "CheckDate"],
+    "AssignmentStatus": ["StatusID", "AssignmentID", "StudentID", "Status", "Score", "Note", "RubricScore", "SubmitDate", "CheckDate", "FileUrl", "FileName", "FileId"],
     "Behaviors": ["BehaviorID", "StudentID", "ClassID", "TypeID", "Points", "Note", "Date", "CreatedBy"],
     "BehaviorTypes": ["TypeID", "TypeName", "Category", "DefaultPoints", "Icon"],
     "ScoreSettings": ["SettingID", "ComponentName", "FullScore", "Order", "Auto"],
